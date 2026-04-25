@@ -1,0 +1,10 @@
+{
+  "name": "ai-team-orchestration",
+  "description": "Bootstrap and run a multi-agent AI development team with named roles (Producer, Dev Team, QA). Provides sprint planning, brainstorm prompts with distinct agent voices, cross-chat context survival, and parallel team workflows.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Denis Evdokimov"
+  },
+  "skills": "skills/",
+  "agents": "agents/"
+}
