@@ -1,0 +1,21 @@
+{
+  "agents": [
+    "ai-team-dev",
+    "ai-team-producer",
+    "ai-team-qa"
+  ],
+  "skill": {
+    "source": "ai-team",
+    "target": "ai-team-orchestration"
+  },
+  "plugin": {
+    "target": "ai-team-orchestration",
+    "managedFields": [
+      "description",
+      "version",
+      "keywords",
+      "author",
+      "license"
+    ]
+  }
+}
