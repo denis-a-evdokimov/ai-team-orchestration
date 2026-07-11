@@ -50,11 +50,23 @@ const STALE_POSITIVE_INSTRUCTIONS = [
   'After dev merges, QA',
   'Sprint N is merged to main. Do full playthrough',
   'git pull origin main && git checkout -b',
-  '--track origin/main',
   '--track upstream/main',
   'when its verdict was affected',
   'may invalidate that evidence',
   'Self-review SHA: [SHA]',
+];
+const REQUIRED_BRANCH_PLACEHOLDERS = [
+  '<target-branch>',
+  '<base-remote>',
+  '<base-ref>',
+  '<push-remote>',
+  '<working-branch>',
+];
+const STALE_APPLICATION_BRANCH_DEFAULTS = [
+  'origin/main',
+  'updated `main`',
+  'merge to `main`',
+  'direct changes to `main`',
 ];
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
 const AGENT_NAME_MAX_LENGTH = 50;
@@ -97,6 +109,10 @@ function sameArray(actual, expected) {
   return Array.isArray(actual)
     && actual.length === expected.length
     && actual.every((value, index) => value === expected[index]);
+}
+
+function countOccurrences(contents, value) {
+  return contents.split(value).length - 1;
 }
 
 function parseFrontmatter(filePath) {
@@ -537,6 +553,21 @@ function validateDeliveryWorkflow(files) {
     if (!projectBrief.includes('feature/devops-N')) {
       addError(`${repoPath(projectBriefPath)} must use the canonical DevOps branch feature/devops-N.`);
     }
+    for (const placeholder of REQUIRED_BRANCH_PLACEHOLDERS) {
+      if (countOccurrences(projectBrief, placeholder) < 2) {
+        addError(`${repoPath(projectBriefPath)} must declare and use branch placeholder "${placeholder}".`);
+      }
+    }
+    for (const command of [
+      'git fetch --prune <base-remote>',
+      'git rev-parse --verify <base-ref>',
+      'git switch --no-track --create <working-branch> <base-ref>',
+      'git push --set-upstream <push-remote> <working-branch>',
+    ]) {
+      if (!projectBrief.includes(command)) {
+        addError(`${repoPath(projectBriefPath)} must contain parameterized command "${command}".`);
+      }
+    }
   }
 
   const sprintPlanPath = path.join(
@@ -566,8 +597,20 @@ function validateDeliveryWorkflow(files) {
         addError(`${repoPath(sprintPlanPath)} QA acceptance must be recorded as a live PR artifact before archival.`);
       }
     }
-    if (!sprintPlan.includes('git switch --no-track --create')) {
-      addError(`${repoPath(sprintPlanPath)} must create feature branches without tracking origin/main.`);
+    for (const placeholder of REQUIRED_BRANCH_PLACEHOLDERS) {
+      if (countOccurrences(sprintPlan, placeholder) < 2) {
+        addError(`${repoPath(sprintPlanPath)} must declare and use branch placeholder "${placeholder}".`);
+      }
+    }
+    for (const command of [
+      'git fetch --prune <base-remote>',
+      'git rev-parse --verify <base-ref>',
+      'git switch --no-track --create <working-branch> <base-ref>',
+      'git push --set-upstream <push-remote> <working-branch>',
+    ]) {
+      if (!sprintPlan.includes(command)) {
+        addError(`${repoPath(sprintPlanPath)} must contain parameterized command "${command}".`);
+      }
     }
     if (!sprintPlan.includes('Post-Merge Closeout')) {
       addError(`${repoPath(sprintPlanPath)} must define the post-merge docs-only closeout.`);
@@ -632,6 +675,22 @@ function validateDeliveryWorkflow(files) {
     }
   }
 
+  if (existsSync(devAgentPath)) {
+    const devAgent = readFileSync(devAgentPath, 'utf8');
+    for (const term of [
+      'target branch',
+      'base remote',
+      'base ref',
+      'push remote',
+      'working branch',
+      'Never substitute a default branch',
+    ]) {
+      if (!devAgent.includes(term)) {
+        addError(`${repoPath(devAgentPath)} must preserve parameterized branch contract term "${term}".`);
+      }
+    }
+  }
+
   for (const filePath of files.filter((candidate) => candidate.endsWith('.md'))) {
     const contents = readFileSync(filePath, 'utf8');
     for (const staleInstruction of STALE_POSITIVE_INSTRUCTIONS) {
@@ -644,6 +703,11 @@ function validateDeliveryWorkflow(files) {
       for (const staleRoleTerm of STALE_ROLE_TERMS) {
         if (contents.includes(staleRoleTerm)) {
           addError(`${repoPath(filePath)} contains stale role term "${staleRoleTerm}".`);
+        }
+      }
+      for (const staleDefault of STALE_APPLICATION_BRANCH_DEFAULTS) {
+        if (contents.includes(staleDefault)) {
+          addError(`${repoPath(filePath)} contains hardcoded application branch default "${staleDefault}".`);
         }
       }
     }

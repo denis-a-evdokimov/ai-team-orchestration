@@ -263,7 +263,7 @@ test('validator rejects removal of a canonical SHA evidence contract', (context)
   assert.match(result.stderr, /must contain canonical contract/);
 });
 
-test('validator rejects unsafe tracking of origin main in sprint instructions', (context) => {
+test('validator rejects a hardcoded application base in sprint instructions', (context) => {
   const targetRoot = createRepositoryCopy(context);
   const sprintPath = path.join(
     targetRoot,
@@ -274,13 +274,47 @@ test('validator rejects unsafe tracking of origin main in sprint instructions', 
   );
   mutateText(
     sprintPath,
-    'git switch --no-track --create feature/sprint-N origin/main',
-    'git switch --create feature/sprint-N --track origin/main',
+    '> Base ref: `<base-ref>`',
+    '> Base ref: `origin/main`',
   );
 
   const result = runValidator(targetRoot);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /stale delivery instruction|without tracking origin\/main/);
+  assert.match(result.stderr, /branch placeholder "<base-ref>"|hardcoded application branch default "origin\/main"/);
+});
+
+test('validator rejects branch commands that ignore the sprint plan values', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const sprintPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'sprint-plan-template.md',
+  );
+  mutateText(
+    sprintPath,
+    'git switch --no-track --create <working-branch> <base-ref>',
+    'git switch --no-track --create feature/sprint-N origin/develop',
+  );
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /parameterized command/);
+});
+
+test('validator rejects a Dev agent that substitutes a default branch', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const devPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');
+  mutateText(
+    devPath,
+    'Never substitute a default branch for the plan\'s base.',
+    'Use origin/main when the plan is unclear.',
+  );
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /parameterized branch contract term|hardcoded application branch default/);
 });
 
 test('validator rejects unsafe tracking of upstream main in contributor instructions', (context) => {

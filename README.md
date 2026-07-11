@@ -68,7 +68,7 @@ Run a team consilium to validate the plan.
 
 ```
 @ai-team-dev Read PROJECT_BRIEF.md, then docs/sprint-1/plan.md. Execute Sprint 1.
-Preflight a clean worktree, fetch/prune origin, and create feature/sprint-1 explicitly from origin/main.
+Preflight a clean worktree, then use the target branch, base remote/ref, push remote, and working branch recorded in the sprint plan. Never substitute a default branch for those plan values.
 Implement, test, self-review, then open the PR and hand off its exact head SHA.
 ```
 
