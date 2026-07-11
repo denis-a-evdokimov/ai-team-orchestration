@@ -398,3 +398,43 @@ test('validator rejects missing capability symmetry and QA archive path', (conte
   assert.match(result.stderr, /must contain canonical section "## Capability Protocol"/);
   assert.match(result.stderr, /canonical QA archive path/);
 });
+
+test('validator rejects committed post-push gate evidence in progress tracker', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const sprintPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'sprint-plan-template.md',
+  );
+  mutateText(
+    sprintPath,
+    '| Dev self-review | Dev | pending | live on PR after final push |',
+    '| Dev self-review | Dev | pass | [PR review link] |',
+  );
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pre-candidate tracker contract/);
+});
+
+test('validator rejects application handoff instructions that commit live PR links', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const briefPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'project-brief-template.md',
+  );
+  mutateText(
+    briefPath,
+    'Do not amend `progress.md` or `done.md` merely to copy those links',
+    'Amend `progress.md` after QA to copy the final links',
+  );
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /handoff contract/);
+});

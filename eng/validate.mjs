@@ -29,6 +29,8 @@ const DELIVERY_STATE_MACHINE = 'Plan → Implement → Dev self-review → Indep
 const REQUIRED_DELIVERY_CONTRACTS = [
   'Every PR-head change invalidates both SHA-bound gates.',
   'A commit cannot durably contain its own SHA.',
+  'every post-push gate remains explicitly `pending`',
+  'Do not amend those files merely to copy live links',
   'docs-only closeout PR',
   'Closeout is a post-lifecycle, docs-only follow-up, not a merge gate.',
   'no further closeout required',
@@ -568,6 +570,15 @@ function validateDeliveryWorkflow(files) {
         addError(`${repoPath(projectBriefPath)} must contain parameterized command "${command}".`);
       }
     }
+    for (const handoffContract of [
+      'Keep Dev self-review, independent review, QA, merge, and smoke rows explicitly `pending`',
+      'Do not amend `progress.md` or `done.md` merely to copy those links',
+      'replace pending gate rows with archived links',
+    ]) {
+      if (!projectBrief.includes(handoffContract)) {
+        addError(`${repoPath(projectBriefPath)} must contain handoff contract "${handoffContract}".`);
+      }
+    }
   }
 
   const sprintPlanPath = path.join(
@@ -617,6 +628,18 @@ function validateDeliveryWorkflow(files) {
     }
     if (!sprintPlan.includes('docs/qa/sprint-N-signoff.md')) {
       addError(`${repoPath(sprintPlanPath)} must define the canonical QA archive path docs/qa/sprint-N-signoff.md.`);
+    }
+    for (const trackerContract of [
+      'This committed tracker is a pre-candidate snapshot.',
+      '| Dev self-review | Dev | pending | live on PR after final push |',
+      '| Independent review | Producer/reviewer | pending | live on PR after final push |',
+      '| QA acceptance | QA | pending | live on PR after final push |',
+      '| Regular merge | Producer | pending | live on PR after final push |',
+      '| Post-merge smoke | QA | pending | archive through closeout PR |',
+    ]) {
+      if (!sprintPlan.includes(trackerContract)) {
+        addError(`${repoPath(sprintPlanPath)} must contain pre-candidate tracker contract "${trackerContract}".`);
+      }
     }
     for (const contract of [
       'no further closeout required',
