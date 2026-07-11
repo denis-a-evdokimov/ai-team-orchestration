@@ -2,6 +2,14 @@
 
 Work on a feature branch. This repository is the canonical source; do not begin by patching an Awesome Copilot copy. The ownership and naming invariants are defined in [AGENTS.md](./AGENTS.md).
 
+## Pull requests
+
+All changes enter `main` through a pull request; direct pushes and force pushes are blocked. Every pull request must pass the repository validation workflow, and unresolved review conversations block merging. External contributions require one approval from the repository owner. Because GitHub does not count an author's approval of their own pull request, the owner may bypass only the approval requirement for an owner-authored pull request; required checks and the pull-request-only path still apply.
+
+Use a regular merge. Squash and rebase merges are disabled so SHA-bound review and QA evidence remains meaningful. A new commit invalidates stale approval and must pass validation again.
+
+Do not put secrets or end-user identifying information in code, fixtures, documentation, issues, pull requests, screenshots, or logs. Report suspected vulnerabilities privately as described in [.github/SECURITY.md](./.github/SECURITY.md).
+
 ## Local validation
 
 Node.js 20 or newer is required. There are no third-party package dependencies.
