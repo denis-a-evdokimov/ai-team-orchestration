@@ -8,9 +8,9 @@ An agent plugin for VS Code that bootstraps and runs a multi-agent AI developmen
 
 | Agent | Chat mention | Role | Tool Access |
 |-------|-------------|------|-------------|
-| **Producer** (Remy) | `@producer` | Sprint planning, coordination, PR merging | Read-only + search (no code editing) |
+| **Producer** (Remy) | `@producer` | Sprint planning, coordination, PR merging | Read + coordination-doc editing (no application-code editing) |
 | **Dev Team** (Nova, Sage, Milo) | `@dev-team` | Frontend, backend, and visual implementation | Full coding tools |
-| **QA** (Ivy) | `@qa` | Testing, bug filing, sign-off | Read + terminal (no source editing) |
+| **QA** (Ivy) | `@qa` | Testing, bug filing, sign-off | Read + terminal + test/docs editing (no source editing) |
 
 ### Skill
 
@@ -82,8 +82,8 @@ The human acts as the message bus between parallel chats:
 team       (on demand)
 ```
 
-- **@producer** cannot edit code — enforced by tool restrictions
-- **@qa** cannot edit source files — only reads, tests, and files bugs
+- **@producer** edits coordination docs, never application source files
+- **@qa** edits tests and QA docs, never application source files
 - **@dev-team** has full tools — builds features as Nova (frontend), Sage (backend), and Milo (CSS/design)
 - Each team works in a **separate clone** on its own feature branch
 

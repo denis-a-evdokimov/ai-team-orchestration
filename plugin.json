@@ -1,10 +1,21 @@
 {
   "name": "ai-team-orchestration",
   "description": "Bootstrap and run a multi-agent AI development team with named roles (Producer, Dev Team, QA). Provides sprint planning, brainstorm prompts with distinct agent voices, cross-chat context survival, and parallel team workflows.",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "keywords": [
+    "ai-team",
+    "multi-agent",
+    "sprint-planning",
+    "brainstorm",
+    "project-management",
+    "orchestration",
+    "developer-workflow"
+  ],
   "author": {
     "name": "Denis Evdokimov"
   },
+  "repository": "https://github.com/denis-a-evdokimov/ai-team-orchestration",
+  "license": "MIT",
   "skills": "skills/",
   "agents": "agents/"
 }

@@ -63,14 +63,25 @@ git clone <repo> project-devops # DevOps (only when needed)
 
 The single source of truth across all chats. See [project brief template](./references/project-brief-template.md).
 
-**Critical sections that must not be abbreviated:**
-- **Section 12: Cross-Chat Handoff Protocol** — how context survives between chats
-- **Section 13: Bug & Fix Tracking** — GitHub Issues as single source of truth
-- **Section 14: Multi-Repo Setup** — separate clones, branch strategy
+**Required sections (do not abbreviate):**
+1. Project Overview
+2. Concept / Product Description
+3. Tech Stack
+4. Architecture (ASCII diagram)
+5. Key Files Map
+6. Team Roles
+7. Sprint Status (updated every sprint)
+8. Current State (rewritten every sprint)
+9. Security Rules
+10. How to Run Locally
+11. How to Deploy
+12. **Cross-Chat Handoff Protocol** — how context survives between chats
+13. **Bug & Fix Tracking** — GitHub Issues as single source of truth
+14. **Multi-Repo Setup** — separate clones, branch strategy, merge rules
 
 ### 2. Run a Brainstorm
 
-Use the [brainstorm format](./references/brainstorm-format.md) to produce real debate. Key: name each agent explicitly with distinct personality and perspective.
+Use the [brainstorm format](./references/brainstorm-format.md) to produce real debate. Key: name each agent explicitly with distinct personality and perspective. Require at least 2 genuine disagreements to prevent groupthink.
 
 ### 3. Create Sprint Plans
 
@@ -86,7 +97,7 @@ Read PROJECT_BRIEF.md, then read docs/sprint-N/plan.md. Execute Sprint N.
 
 First: git pull origin main && git checkout -b feature/sprint-N
 
-Close GitHub Issues in commits: "fix: #NN description"
+Close GitHub Issues in commits: "fix: description (Fixes #NN)"
 Update docs/sprint-N/progress.md after each phase.
 When done, push and create PR: git push origin feature/sprint-N
 Follow Sections 12-14 of PROJECT_BRIEF.md.

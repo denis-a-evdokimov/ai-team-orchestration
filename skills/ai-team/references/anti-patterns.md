@@ -17,7 +17,7 @@ Lessons learned from real multi-agent projects. Each anti-pattern was encountere
 | Don't | Do Instead | Why |
 |-------|------------|-----|
 | Producer writes code | Producer only plans, merges, files issues | When the coordinator starts coding, they lose track of the big picture. Fixes in the producer chat often conflict with dev team work. |
-| One agent does everything | Separate agents for dev, QA, coordination | Context isolation prevents cross-contamination. QA shouldn't have edit tools. |
+| One agent does everything | Separate agents for dev, QA, coordination | Context isolation prevents cross-contamination. QA may edit tests and QA docs, but never application source. |
 | Skip the brainstorm | Run brainstorm → plan → execute | Jumping straight to code produces generic results. Brainstorms surface edge cases early. |
 | Vague brainstorm prompts ("you are the team") | Name each agent with distinct perspective | Named agents with defined tendencies produce real debate. Generic prompts produce bland consensus. |
 
