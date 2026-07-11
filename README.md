@@ -8,9 +8,9 @@ An agent plugin for VS Code that bootstraps and runs a multi-agent AI developmen
 
 | Agent | Chat mention | Role | Tool Access |
 |-------|-------------|------|-------------|
-| **Producer** (Remy) | `@producer` | Sprint planning, coordination, PR merging | Read + coordination-doc editing (no application-code editing) |
-| **Dev Team** (Nova, Sage, Milo) | `@dev-team` | Frontend, backend, and visual implementation | Full coding tools |
-| **QA** (Ivy) | `@qa` | Testing, bug filing, sign-off | Read + terminal + test/docs editing (no source editing) |
+| **Producer** (Remy) | `@ai-team-producer` | Sprint planning, coordination, PR merging | Read + coordination-doc editing (no application-code editing) |
+| **Dev Team** (Nova, Sage, Milo) | `@ai-team-dev` | Frontend, backend, and visual implementation | Full coding tools |
+| **QA** (Ivy) | `@ai-team-qa` | Testing, bug filing, sign-off | Read + terminal + test/docs editing (no source editing) |
 
 ### Skill
 
@@ -43,7 +43,7 @@ Type `/ai-team` in chat to access templates for:
 ### 1. Bootstrap a project
 
 ```
-@producer I want to build [describe your project in 3-5 sentences].
+@ai-team-producer I want to build [describe your project in 3-5 sentences].
 Use the /ai-team skill to bootstrap this project.
 Start with a brainstorm, then create PROJECT_BRIEF.md with ALL sections (1-14).
 ```
@@ -51,21 +51,21 @@ Start with a brainstorm, then create PROJECT_BRIEF.md with ALL sections (1-14).
 ### 2. Plan a sprint
 
 ```
-@producer Create Sprint 1 plan. Here's what needs to be done: [scope].
+@ai-team-producer Create Sprint 1 plan. Here's what needs to be done: [scope].
 Run a team consilium to validate the plan.
 ```
 
 ### 3. Execute (in a separate VS Code window)
 
 ```
-@dev-team Read PROJECT_BRIEF.md, then docs/sprint-1/plan.md. Execute Sprint 1.
+@ai-team-dev Read PROJECT_BRIEF.md, then docs/sprint-1/plan.md. Execute Sprint 1.
 git pull origin main && git checkout -b feature/sprint-1
 ```
 
 ### 4. Test (in another VS Code window)
 
 ```
-@qa Sprint 1 is merged to main. Do full playthrough.
+@ai-team-qa Sprint 1 is merged to main. Do full playthrough.
 File bugs as GitHub Issues. Write docs/qa/sprint-1-signoff.md.
 ```
 
@@ -74,17 +74,17 @@ File bugs as GitHub Issues. Write docs/qa/sprint-1-signoff.md.
 The human acts as the message bus between parallel chats:
 
 ```
-  @producer (plans & merges)
+  @ai-team-producer (plans & merges)
         │
    ┌────┼────┐
    ▼    ▼    ▼
-@dev  @qa  DevOps
-team       (on demand)
+@ai-team  @ai-team  DevOps
+-dev      -qa       (on demand)
 ```
 
-- **@producer** edits coordination docs, never application source files
-- **@qa** edits tests and QA docs, never application source files
-- **@dev-team** has full tools — builds features as Nova (frontend), Sage (backend), and Milo (CSS/design)
+- **@ai-team-producer** edits coordination docs, never application source files
+- **@ai-team-qa** edits tests and QA docs, never application source files
+- **@ai-team-dev** has full tools — builds features as Nova (frontend), Sage (backend), and Milo (CSS/design)
 - Each team works in a **separate clone** on its own feature branch
 
 ## Customization
@@ -93,7 +93,7 @@ team       (on demand)
 Edit the `.agent.md` files in `agents/` — update the name and personality.
 
 ### Add/remove roles
-- Don't need QA? Delete `agents/qa.agent.md`
+- Don't need QA? Delete `agents/ai-team-qa.agent.md`
 - Need DevOps? Create `agents/devops.agent.md` with CI/CD-focused instructions
 - Need a Data Scientist? Create `agents/data.agent.md` with ML-focused tools
 
