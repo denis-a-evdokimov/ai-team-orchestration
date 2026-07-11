@@ -1,0 +1,14 @@
+{
+  "name": "ai-team-orchestration",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node eng/validate.mjs",
+    "test": "node --test",
+    "awesome:check": "node eng/sync-awesome-copilot.mjs",
+    "awesome:write": "node eng/sync-awesome-copilot.mjs --write"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

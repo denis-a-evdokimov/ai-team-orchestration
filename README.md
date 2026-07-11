@@ -103,6 +103,17 @@ Edit the `tools:` field in agent frontmatter:
 - `[read, edit, search, execute]` — full coding
 - `[read, search, execute]` — read + test (no editing)
 
+## Maintainers / Awesome Copilot synchronization
+
+This repository is the canonical source. See [AGENTS.md](./AGENTS.md) for ownership rules and [CONTRIBUTING.md](./CONTRIBUTING.md) for the complete export and validation workflow.
+
+```text
+npm run awesome:check -- --target <awesome-copilot-checkout>
+npm run awesome:write -- --target <awesome-copilot-checkout>
+```
+
+Write mode requires a clean Awesome Copilot feature branch and never commits or pushes.
+
 ## Origin
 
 This plugin codifies the workflow that shipped [Arcade After Dark](https://github.com/denis-a-evdokimov/guess-and-get) — a 30-game birthday gift app built entirely by 7 AI agents in 5 days. Zero lines of human-written code.
