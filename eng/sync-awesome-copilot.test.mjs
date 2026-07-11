@@ -19,6 +19,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  sanitizedGitEnvironment,
   syncAwesomeCopilot,
   transformSkillMarkdown,
 } from './sync-awesome-copilot.mjs';
@@ -475,6 +476,24 @@ test('source provenance rejects unsafe states and excludes ignored ambient files
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot: symlinkSource, targetRoot: target.targetRoot }),
     /symbolic link|junction|reparse point/i,
   );
+});
+
+test('git environment sanitization preserves prototype-shaped environment keys as data', () => {
+  const hadOwnValue = Object.hasOwn(process.env, '__proto__');
+  const previousValue = hadOwnValue ? process.env.__proto__ : undefined;
+  try {
+    process.env.__proto__ = 'synthetic-test-value';
+    const environment = sanitizedGitEnvironment();
+    assert.equal(Object.getPrototypeOf(environment), null);
+    assert.equal(Object.hasOwn(environment, '__proto__'), true);
+    assert.equal(environment.__proto__, 'synthetic-test-value');
+  } finally {
+    if (hadOwnValue) {
+      process.env.__proto__ = previousValue;
+    } else {
+      delete process.env.__proto__;
+    }
+  }
 });
 
 test('target managed skill root link escape is rejected and external sentinel is unchanged', (context) => {

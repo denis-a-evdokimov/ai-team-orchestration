@@ -9,6 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// AI_TEAM_VALIDATE_ROOT is a test-only trusted checkout root. Validation never
+// accepts individual paths from repository content or network input.
 const REPO_ROOT = path.resolve(process.env.AI_TEAM_VALIDATE_ROOT || DEFAULT_REPO_ROOT);
 const EXPECTED_AGENT_IDS = [
   'ai-team-dev',
@@ -393,7 +395,7 @@ function walkFiles(directory, relativeDirectory = '') {
     } else if (entry.isDirectory()) {
       files.push(...walkFiles(absolutePath, relativePath));
     } else if (entry.isFile()) {
-      files.push(path.join(REPO_ROOT, relativePath));
+      files.push(absolutePath);
     }
   }
   return files.sort();
