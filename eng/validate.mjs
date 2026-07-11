@@ -30,8 +30,21 @@ const REQUIRED_DELIVERY_CONTRACTS = [
   'Every PR-head change invalidates both SHA-bound gates.',
   'A commit cannot durably contain its own SHA.',
   'docs-only closeout PR',
+  'Closeout is a post-lifecycle, docs-only follow-up, not a merge gate.',
   'no further closeout required',
   'no closeout-of-closeout PR is created',
+];
+const REQUIRED_ROLE_TERMS = [
+  'Client/Interaction Engineer',
+  'Core/Service Engineer',
+  'Visual/Experience Director',
+];
+const STALE_ROLE_TERMS = [
+  'Delivery Engineer',
+  'feature/delivery-N',
+  'Art/Visual Director',
+  'Frontend Engineer',
+  'Backend Engineer',
 ];
 const STALE_POSITIVE_INSTRUCTIONS = [
   'After dev merges, QA',
@@ -494,6 +507,9 @@ function validateDeliveryWorkflow(files) {
     if (!section.includes(DELIVERY_STATE_MACHINE)) {
       addError(`${repoPath(agentPath)} shared delivery section must contain the canonical state machine.`);
     }
+    if (!section.includes('install the plugin (not just this agent)')) {
+      addError(`${repoPath(agentPath)} shared delivery section must explain that the bundled workflow requires the plugin.`);
+    }
     sharedSections.push({ agentPath, section });
   }
 
@@ -517,6 +533,9 @@ function validateDeliveryWorkflow(files) {
     const projectBrief = readFileSync(projectBriefPath, 'utf8');
     if (!/^## 15\. Delivery & Review Gates\s*\r?$/m.test(projectBrief)) {
       addError(`${repoPath(projectBriefPath)} must contain Section 15: Delivery & Review Gates.`);
+    }
+    if (!projectBrief.includes('feature/devops-N')) {
+      addError(`${repoPath(projectBriefPath)} must use the canonical DevOps branch feature/devops-N.`);
     }
   }
 
@@ -553,6 +572,9 @@ function validateDeliveryWorkflow(files) {
     if (!sprintPlan.includes('Post-Merge Closeout')) {
       addError(`${repoPath(sprintPlanPath)} must define the post-merge docs-only closeout.`);
     }
+    if (!sprintPlan.includes('docs/qa/sprint-N-signoff.md')) {
+      addError(`${repoPath(sprintPlanPath)} must define the canonical QA archive path docs/qa/sprint-N-signoff.md.`);
+    }
     for (const contract of [
       'no further closeout required',
       'do not create a closeout-of-closeout PR',
@@ -563,11 +585,66 @@ function validateDeliveryWorkflow(files) {
     }
   }
 
+  const devAgentPath = path.join(REPO_ROOT, 'agents', 'ai-team-dev.agent.md');
+  const brainstormPath = path.join(
+    REPO_ROOT,
+    'skills',
+    'ai-team',
+    'references',
+    'brainstorm-format.md',
+  );
+  const skillPathForRoles = path.join(REPO_ROOT, 'skills', 'ai-team', 'SKILL.md');
+  for (const rolePath of [devAgentPath, brainstormPath, skillPathForRoles]) {
+    if (!existsSync(rolePath)) {
+      continue;
+    }
+    const contents = readFileSync(rolePath, 'utf8');
+    for (const roleTerm of REQUIRED_ROLE_TERMS) {
+      if (!contents.includes(roleTerm)) {
+        addError(`${repoPath(rolePath)} must contain canonical role title "${roleTerm}".`);
+      }
+    }
+  }
+
+  for (const agentId of EXPECTED_AGENT_IDS) {
+    const agentPath = path.join(REPO_ROOT, 'agents', `${agentId}.agent.md`);
+    if (!existsSync(agentPath)) {
+      continue;
+    }
+    const contents = readFileSync(agentPath, 'utf8');
+    const firstRoleHeading = agentId === 'ai-team-dev' ? '## Workflow' : '## Responsibilities';
+    const requiredHeadings = [
+      '## Shared Delivery Lifecycle',
+      firstRoleHeading,
+      '## Capability Protocol',
+      '## Boundaries',
+      '## Communication Style',
+    ];
+    let previousIndex = -1;
+    for (const heading of requiredHeadings) {
+      const headingIndex = contents.indexOf(heading);
+      if (headingIndex === -1) {
+        addError(`${repoPath(agentPath)} must contain canonical section "${heading}".`);
+      } else if (headingIndex <= previousIndex) {
+        addError(`${repoPath(agentPath)} canonical role sections are out of order at "${heading}".`);
+      }
+      previousIndex = headingIndex;
+    }
+  }
+
   for (const filePath of files.filter((candidate) => candidate.endsWith('.md'))) {
     const contents = readFileSync(filePath, 'utf8');
     for (const staleInstruction of STALE_POSITIVE_INSTRUCTIONS) {
       if (contents.includes(staleInstruction)) {
         addError(`${repoPath(filePath)} contains stale delivery instruction "${staleInstruction}".`);
+      }
+    }
+    if (repoPath(filePath).startsWith('agents/')
+      || repoPath(filePath).startsWith('skills/ai-team/')) {
+      for (const staleRoleTerm of STALE_ROLE_TERMS) {
+        if (contents.includes(staleRoleTerm)) {
+          addError(`${repoPath(filePath)} contains stale role term "${staleRoleTerm}".`);
+        }
       }
     }
   }

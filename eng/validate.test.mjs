@@ -316,3 +316,51 @@ test('validator rejects removal of terminal closeout semantics', (context) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /must contain canonical contract/);
 });
+
+test('validator rejects stale role titles and the old delivery branch name', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const brainstormPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'brainstorm-format.md',
+  );
+  const briefPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'project-brief-template.md',
+  );
+  mutateText(brainstormPath, 'Client/Interaction Engineer', 'Frontend Engineer');
+  mutateText(briefPath, 'feature/devops-N', 'feature/delivery-N');
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /stale role term "Frontend Engineer"/);
+  assert.match(result.stderr, /stale role term "feature\/delivery-N"/);
+});
+
+test('validator rejects missing capability symmetry and QA archive path', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const devPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');
+  const sprintPath = path.join(
+    targetRoot,
+    'skills',
+    'ai-team',
+    'references',
+    'sprint-plan-template.md',
+  );
+  mutateText(devPath, '## Capability Protocol', '## Tool Notes');
+  mutateText(
+    sprintPath,
+    'docs/qa/sprint-N-signoff.md',
+    'docs/qa/sprint-N-result.md',
+  );
+
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must contain canonical section "## Capability Protocol"/);
+  assert.match(result.stderr, /canonical QA archive path/);
+});

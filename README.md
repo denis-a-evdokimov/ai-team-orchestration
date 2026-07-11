@@ -114,7 +114,7 @@ You may adapt role personalities and project perspectives without changing the t
 
 ### Tool availability
 
-The bundled agents intentionally omit the optional `tools` frontmatter field. They inherit all tools available in the user's environment, including built-in tools and enabled tools from MCP servers and extensions. Selecting an AI Team agent therefore does not replace the user's tool configuration with a plugin-defined allowlist.
+The bundled agents intentionally omit the optional `tools` and `model` frontmatter fields. They inherit all tools available in the user's environment, including built-in tools and enabled tools from MCP servers and extensions, and leave model selection to the developer so each session can use its best available model. Selecting an AI Team agent therefore does not replace the user's tool configuration with a plugin-defined allowlist.
 
 Role boundaries are enforced by each agent's instructions and by the editor's normal trust, authentication, approval, and permission controls—not by hiding capabilities. An agent must still detect unavailable or unauthenticated capabilities and hand off exact actions instead of claiming they happened.
 
