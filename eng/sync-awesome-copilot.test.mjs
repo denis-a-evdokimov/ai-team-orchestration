@@ -470,6 +470,7 @@ test('source provenance rejects unsafe states and excludes ignored ambient files
     `120000,${linkBlob},skills/ai-team/tracked-link.txt`,
   );
   runGit(symlinkSource, 'commit', '-m', 'add tracked symlink');
+  runGit(symlinkSource, 'reset', '--hard', 'HEAD');
   assert.throws(
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot: symlinkSource, targetRoot: target.targetRoot }),
     /symbolic link|junction|reparse point/i,
