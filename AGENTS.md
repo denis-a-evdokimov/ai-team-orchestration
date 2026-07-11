@@ -9,6 +9,7 @@ The following identities are invariants:
 - The standalone skill folder is `skills/ai-team`, and its `SKILL.md` frontmatter name is exactly `ai-team`.
 - The Awesome Copilot target skill is `skills/ai-team-orchestration`, with exported frontmatter name `ai-team-orchestration`.
 - The stable shared agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`.
+- The three bundled agents intentionally omit the optional `tools` field so they inherit the user's enabled built-in, MCP, and extension tools. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist without an explicit compatibility decision.
 - The standalone plugin manifest remains at the repository root as `plugin.json`.
 
 The exporter produces content-equivalent managed files after LF normalization. The only semantic adaptation is the skill frontmatter `name`, from `ai-team` to `ai-team-orchestration`; opaque unknown assets remain byte-preserved. The standalone and Awesome copies are therefore not required to be byte-identical. Do not rename the standalone skill to match the target.

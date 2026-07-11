@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   statSync,
@@ -7,7 +8,8 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = path.resolve(process.env.AI_TEAM_VALIDATE_ROOT || DEFAULT_REPO_ROOT);
 const EXPECTED_AGENT_IDS = [
   'ai-team-dev',
   'ai-team-producer',
@@ -20,6 +22,33 @@ const EXPECTED_MANAGED_PLUGIN_FIELDS = [
   'author',
   'license',
 ];
+const DELIVERY_WORKFLOW_PATH = 'skills/ai-team/references/delivery-workflow.md';
+const DELIVERY_WORKFLOW_LINK = './references/delivery-workflow.md';
+const SHARED_DELIVERY_HEADING = '## Shared Delivery Lifecycle';
+const DELIVERY_STATE_MACHINE = 'Plan → Implement → Dev self-review → Independent review gate → QA acceptance on PR head → Fix/re-verify loop → regular merge → post-merge smoke check';
+const REQUIRED_DELIVERY_CONTRACTS = [
+  'Every PR-head change invalidates both SHA-bound gates.',
+  'A commit cannot durably contain its own SHA.',
+  'docs-only closeout PR',
+  'no further closeout required',
+  'no closeout-of-closeout PR is created',
+];
+const STALE_POSITIVE_INSTRUCTIONS = [
+  'After dev merges, QA',
+  'Sprint N is merged to main. Do full playthrough',
+  'git pull origin main && git checkout -b',
+  '--track origin/main',
+  '--track upstream/main',
+  'when its verdict was affected',
+  'may invalidate that evidence',
+  'Self-review SHA: [SHA]',
+];
+const SLUG_PATTERN = /^[a-z0-9-]+$/;
+const AGENT_NAME_MAX_LENGTH = 50;
+const DESCRIPTION_MAX_LENGTH = 1024;
+const SKILL_NAME_MAX_LENGTH = 64;
+const SKILL_DESCRIPTION_MIN_LENGTH = 10;
+const SKILL_FILE_MAX_BYTES = 5 * 1024 * 1024;
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const TEXT_EXTENSIONS = new Set([
   '.cjs',
@@ -90,15 +119,6 @@ function parseFrontmatter(filePath) {
   return fields;
 }
 
-function unquote(value) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const match = /^(['"])(.*)\1$/.exec(value.trim());
-  return match ? match[2] : value.trim();
-}
-
 function quotedValue(value) {
   if (typeof value !== 'string') {
     return null;
@@ -106,6 +126,13 @@ function quotedValue(value) {
 
   const match = /^(['"])(.*)\1$/.exec(value.trim());
   return match ? match[2] : null;
+}
+
+function scalarValue(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return quotedValue(value) ?? value.trim();
 }
 
 function validatePlugin() {
@@ -130,14 +157,30 @@ function validatePlugin() {
     }
   }
 
+  if (typeof plugin.name === 'string'
+    && (plugin.name.length < 1
+      || plugin.name.length > 50
+      || !SLUG_PATTERN.test(plugin.name))) {
+    addError('plugin.json field "name" must be a lowercase slug between 1 and 50 characters.');
+  }
+
+  if (typeof plugin.description === 'string'
+    && (plugin.description.length < 1 || plugin.description.length > 500)) {
+    addError('plugin.json field "description" must be between 1 and 500 characters.');
+  }
+
   if (!SEMVER_PATTERN.test(plugin.version ?? '')) {
     addError(`plugin.json version "${plugin.version ?? ''}" is not valid SemVer.`);
   }
 
   if (!Array.isArray(plugin.keywords)
     || plugin.keywords.length === 0
-    || plugin.keywords.some((keyword) => typeof keyword !== 'string' || keyword.trim() === '')) {
-    addError('plugin.json field "keywords" must be a non-empty array of non-empty strings.');
+    || plugin.keywords.length > 10
+    || plugin.keywords.some((keyword) => typeof keyword !== 'string'
+      || keyword.length < 1
+      || keyword.length > 30
+      || !SLUG_PATTERN.test(keyword))) {
+    addError('plugin.json field "keywords" must contain 1-10 lowercase slugs, each between 1 and 30 characters.');
   }
 
   const validAuthor = (typeof plugin.author === 'string' && plugin.author.trim() !== '')
@@ -192,28 +235,65 @@ function validateAgents() {
     const frontmatterName = quotedValue(fields.get('name'));
     if (frontmatterName === null) {
       addError(`${repoPath(filePath)} frontmatter name must be quoted.`);
-    } else if (frontmatterName !== fileId) {
-      addError(`${repoPath(filePath)} filename ID "${fileId}" does not match frontmatter name "${frontmatterName}".`);
+    } else {
+      if (frontmatterName.length < 1
+        || frontmatterName.length > AGENT_NAME_MAX_LENGTH
+        || !SLUG_PATTERN.test(frontmatterName)) {
+        addError(`${repoPath(filePath)} frontmatter name must be a lowercase slug between 1 and ${AGENT_NAME_MAX_LENGTH} characters.`);
+      }
+      if (frontmatterName !== fileId) {
+        addError(`${repoPath(filePath)} filename ID "${fileId}" does not match frontmatter name "${frontmatterName}".`);
+      }
     }
 
-    if (!unquote(fields.get('description'))) {
-      addError(`${repoPath(filePath)} must have a non-empty frontmatter description.`);
+    const description = quotedValue(fields.get('description'));
+    if (description === null) {
+      addError(`${repoPath(filePath)} frontmatter description must be properly matching-quoted.`);
+    } else if (description.trim() === '' || description.length > DESCRIPTION_MAX_LENGTH) {
+      addError(`${repoPath(filePath)} frontmatter description must be between 1 and ${DESCRIPTION_MAX_LENGTH} characters.`);
     }
 
     const tools = fields.get('tools');
-    const toolsMatch = typeof tools === 'string' ? /^\[(.*)\]$/.exec(tools) : null;
-    if (!toolsMatch || toolsMatch[1].trim() === '') {
-      addError(`${repoPath(filePath)} must have a non-empty frontmatter tools array.`);
-      continue;
-    }
+    if (tools !== undefined) {
+      const toolsMatch = typeof tools === 'string' ? /^\[(.*)\]$/.exec(tools) : null;
+      if (!toolsMatch) {
+        addError(`${repoPath(filePath)} tools must be an inline array of quoted strings.`);
+        continue;
+      }
 
-    const toolEntries = toolsMatch[1].split(',').map((entry) => entry.trim());
-    if (toolEntries.some((entry) => quotedValue(entry) === null)) {
-      addError(`${repoPath(filePath)} tools must be quoted array entries.`);
+      const toolsBody = toolsMatch[1].trim();
+      if (toolsBody !== '') {
+        const toolEntries = toolsBody.split(',').map((entry) => entry.trim());
+        const toolNames = toolEntries.map((entry) => quotedValue(entry));
+        if (toolNames.some((entry) => entry === null || entry.trim() === '')) {
+          addError(`${repoPath(filePath)} tools must contain only non-empty quoted strings.`);
+        }
+      }
     }
   }
 
   return actualIds;
+}
+
+function validateSkillTree(skillDirectory) {
+  function visit(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      const entryStat = lstatSync(entryPath);
+      if (entryStat.isSymbolicLink()) {
+        addError(`${repoPath(entryPath)} must not be a symbolic link, junction, or reparse point.`);
+      } else if (entryStat.isDirectory()) {
+        visit(entryPath);
+      } else if (entryStat.isFile()) {
+        if (entryStat.size > SKILL_FILE_MAX_BYTES) {
+          addError(`${repoPath(entryPath)} exceeds the ${SKILL_FILE_MAX_BYTES}-byte skill file limit.`);
+        }
+      } else {
+        addError(`${repoPath(entryPath)} must be a regular file or directory.`);
+      }
+    }
+  }
+  visit(skillDirectory);
 }
 
 function validateSkills() {
@@ -222,13 +302,25 @@ function validateSkills() {
     addError('Required skills/ directory is missing.');
     return [];
   }
-  const skillNames = readdirSync(skillsDirectory, { withFileTypes: true })
+  const skillEntries = readdirSync(skillsDirectory, { withFileTypes: true });
+  for (const entry of skillEntries.filter((candidate) => candidate.isSymbolicLink())) {
+    addError(`skills/${entry.name} must not be a symbolic link, junction, or reparse point.`);
+  }
+  const skillNames = skillEntries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
 
   for (const folderName of skillNames) {
-    const skillPath = path.join(skillsDirectory, folderName, 'SKILL.md');
+    const skillDirectory = path.join(skillsDirectory, folderName);
+    if (folderName.length < 1
+      || folderName.length > SKILL_NAME_MAX_LENGTH
+      || !SLUG_PATTERN.test(folderName)) {
+      addError(`skills/${folderName} folder name must be a lowercase slug between 1 and ${SKILL_NAME_MAX_LENGTH} characters.`);
+    }
+    validateSkillTree(skillDirectory);
+
+    const skillPath = path.join(skillDirectory, 'SKILL.md');
     if (!existsSync(skillPath)) {
       addError(`skills/${folderName} is missing SKILL.md.`);
       continue;
@@ -239,11 +331,17 @@ function validateSkills() {
       continue;
     }
 
-    const frontmatterName = unquote(fields.get('name'));
+    const frontmatterName = scalarValue(fields.get('name'));
     if (!frontmatterName) {
       addError(`${repoPath(skillPath)} must have a non-empty frontmatter name.`);
-    } else if (frontmatterName !== folderName) {
-      addError(`${repoPath(skillPath)} frontmatter name "${frontmatterName}" must match folder name "${folderName}".`);
+    } else {
+      if (frontmatterName.length > SKILL_NAME_MAX_LENGTH
+        || !SLUG_PATTERN.test(frontmatterName)) {
+        addError(`${repoPath(skillPath)} frontmatter name must be a lowercase slug between 1 and ${SKILL_NAME_MAX_LENGTH} characters.`);
+      }
+      if (frontmatterName !== folderName) {
+        addError(`${repoPath(skillPath)} frontmatter name "${frontmatterName}" must match folder name "${folderName}".`);
+      }
     }
     if (folderName === 'ai-team') {
       const lines = readFileSync(skillPath, 'utf8').replace(/\r\n?/g, '\n').split('\n');
@@ -256,8 +354,12 @@ function validateSkills() {
       }
     }
 
-    if (!unquote(fields.get('description'))) {
-      addError(`${repoPath(skillPath)} must have a non-empty frontmatter description.`);
+    const description = quotedValue(fields.get('description'));
+    if (description === null) {
+      addError(`${repoPath(skillPath)} frontmatter description must be properly matching-quoted.`);
+    } else if (description.length < SKILL_DESCRIPTION_MIN_LENGTH
+      || description.length > DESCRIPTION_MAX_LENGTH) {
+      addError(`${repoPath(skillPath)} frontmatter description must be between ${SKILL_DESCRIPTION_MIN_LENGTH} and ${DESCRIPTION_MAX_LENGTH} characters.`);
     }
   }
 
@@ -273,7 +375,9 @@ function walkFiles(directory, relativeDirectory = '') {
 
     const relativePath = path.join(relativeDirectory, entry.name);
     const absolutePath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isSymbolicLink()) {
+      continue;
+    } else if (entry.isDirectory()) {
       files.push(...walkFiles(absolutePath, relativePath));
     } else if (entry.isFile()) {
       files.push(path.join(REPO_ROOT, relativePath));
@@ -324,6 +428,146 @@ function validateMarkdownLinks(files) {
       const relativePath = path.relative(REPO_ROOT, resolvedPath);
       if (relativePath.startsWith('..') || path.isAbsolute(relativePath) || !existsSync(resolvedPath)) {
         addError(`${repoPath(filePath)} has an unresolved relative Markdown link: ${destination}`);
+      }
+    }
+  }
+}
+
+function extractUniqueH2Section(contents, heading, filePath) {
+  const headingPattern = new RegExp(`^${escapeRegExp(heading)}\\r?$`, 'gm');
+  const matches = [...contents.matchAll(headingPattern)];
+  if (matches.length !== 1) {
+    addError(`${repoPath(filePath)} must contain exactly one "${heading}" section; found ${matches.length}.`);
+    return null;
+  }
+
+  const startIndex = matches[0].index;
+  const headingLineEnd = contents.indexOf('\n', startIndex);
+  if (headingLineEnd === -1) {
+    return contents.slice(startIndex);
+  }
+
+  const nextHeadingPattern = /^## [^\r\n]+\r?$/gm;
+  nextHeadingPattern.lastIndex = headingLineEnd + 1;
+  const nextHeading = nextHeadingPattern.exec(contents);
+  const endIndex = nextHeading ? nextHeading.index : contents.length;
+  return contents.slice(startIndex, endIndex);
+}
+
+function validateDeliveryWorkflow(files) {
+  const deliveryPath = path.join(REPO_ROOT, DELIVERY_WORKFLOW_PATH);
+  if (!existsSync(deliveryPath) || !statSync(deliveryPath).isFile()) {
+    addError(`${DELIVERY_WORKFLOW_PATH} is required.`);
+  } else {
+    const deliveryWorkflow = readFileSync(deliveryPath, 'utf8');
+    for (const contract of REQUIRED_DELIVERY_CONTRACTS) {
+      if (!deliveryWorkflow.includes(contract)) {
+        addError(`${DELIVERY_WORKFLOW_PATH} must contain canonical contract "${contract}".`);
+      }
+    }
+  }
+
+  const skillPath = path.join(REPO_ROOT, 'skills', 'ai-team', 'SKILL.md');
+  if (existsSync(skillPath)) {
+    const skillContents = readFileSync(skillPath, 'utf8');
+    if (!markdownDestinations(skillContents).includes(DELIVERY_WORKFLOW_LINK)) {
+      addError(`skills/ai-team/SKILL.md must link to ${DELIVERY_WORKFLOW_LINK}.`);
+    }
+  }
+
+  const sharedSections = [];
+  for (const agentId of EXPECTED_AGENT_IDS) {
+    const agentPath = path.join(REPO_ROOT, 'agents', `${agentId}.agent.md`);
+    if (!existsSync(agentPath)) {
+      continue;
+    }
+
+    const contents = readFileSync(agentPath, 'utf8');
+    const section = extractUniqueH2Section(
+      contents,
+      SHARED_DELIVERY_HEADING,
+      agentPath,
+    );
+    if (section === null) {
+      continue;
+    }
+    if (!section.includes(DELIVERY_STATE_MACHINE)) {
+      addError(`${repoPath(agentPath)} shared delivery section must contain the canonical state machine.`);
+    }
+    sharedSections.push({ agentPath, section });
+  }
+
+  if (sharedSections.length === EXPECTED_AGENT_IDS.length) {
+    const [{ section: expectedSection }] = sharedSections;
+    for (const { agentPath, section } of sharedSections.slice(1)) {
+      if (section !== expectedSection) {
+        addError(`${repoPath(agentPath)} Shared Delivery Lifecycle section must be byte-identical across all agents.`);
+      }
+    }
+  }
+
+  const projectBriefPath = path.join(
+    REPO_ROOT,
+    'skills',
+    'ai-team',
+    'references',
+    'project-brief-template.md',
+  );
+  if (existsSync(projectBriefPath)) {
+    const projectBrief = readFileSync(projectBriefPath, 'utf8');
+    if (!/^## 15\. Delivery & Review Gates\s*\r?$/m.test(projectBrief)) {
+      addError(`${repoPath(projectBriefPath)} must contain Section 15: Delivery & Review Gates.`);
+    }
+  }
+
+  const sprintPlanPath = path.join(
+    REPO_ROOT,
+    'skills',
+    'ai-team',
+    'references',
+    'sprint-plan-template.md',
+  );
+  if (existsSync(sprintPlanPath)) {
+    const sprintPlan = readFileSync(sprintPlanPath, 'utf8');
+    const qaHeading = '## QA Acceptance and Archive Template';
+    const qaHeadingMatches = [...sprintPlan.matchAll(
+      new RegExp(`^${escapeRegExp(qaHeading)}\\r?$`, 'gm'),
+    )];
+    if (qaHeadingMatches.length !== 1) {
+      addError(`${repoPath(sprintPlanPath)} must contain exactly one "${qaHeading}" section; found ${qaHeadingMatches.length}.`);
+    } else {
+      const qaSignoff = sprintPlan.slice(qaHeadingMatches[0].index);
+      if (!/Commit SHA:/i.test(qaSignoff)) {
+        addError(`${repoPath(sprintPlanPath)} QA sign-off must record a commit SHA.`);
+      }
+      if (!qaSignoff.includes('Ready for merge') || !qaSignoff.includes('Blocked')) {
+        addError(`${repoPath(sprintPlanPath)} QA sign-off must use Ready for merge / Blocked semantics.`);
+      }
+      if (!qaSignoff.includes('PR review, comment, or check')) {
+        addError(`${repoPath(sprintPlanPath)} QA acceptance must be recorded as a live PR artifact before archival.`);
+      }
+    }
+    if (!sprintPlan.includes('git switch --no-track --create')) {
+      addError(`${repoPath(sprintPlanPath)} must create feature branches without tracking origin/main.`);
+    }
+    if (!sprintPlan.includes('Post-Merge Closeout')) {
+      addError(`${repoPath(sprintPlanPath)} must define the post-merge docs-only closeout.`);
+    }
+    for (const contract of [
+      'no further closeout required',
+      'do not create a closeout-of-closeout PR',
+    ]) {
+      if (!sprintPlan.includes(contract)) {
+        addError(`${repoPath(sprintPlanPath)} closeout instructions must contain "${contract}".`);
+      }
+    }
+  }
+
+  for (const filePath of files.filter((candidate) => candidate.endsWith('.md'))) {
+    const contents = readFileSync(filePath, 'utf8');
+    for (const staleInstruction of STALE_POSITIVE_INSTRUCTIONS) {
+      if (contents.includes(staleInstruction)) {
+        addError(`${repoPath(filePath)} contains stale delivery instruction "${staleInstruction}".`);
       }
     }
   }
@@ -445,6 +689,7 @@ const agentIds = validateAgents();
 const skillNames = validateSkills();
 const files = walkFiles(REPO_ROOT);
 validateMarkdownLinks(files);
+validateDeliveryWorkflow(files);
 validateLegacyReferences(files);
 validateSyncManifest(plugin, agentIds, skillNames);
 

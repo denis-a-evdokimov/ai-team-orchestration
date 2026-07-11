@@ -23,7 +23,10 @@ For packaging or content changes, test the standalone checkout directly before e
 2. Select this repository checkout.
 3. Confirm that `@ai-team-producer`, `@ai-team-dev`, and `@ai-team-qa` are available.
 4. Confirm that the `ai-team` skill loads. In a plugin installation, VS Code may show its namespace-prefixed command, such as `/ai-team-orchestration:ai-team`.
-5. Exercise the changed prompt or workflow without changing the stable IDs or local skill name.
+5. Enable a test MCP or extension-provided tool, switch among the three AI Team agents, and confirm the tool remains available. The bundled agents intentionally omit `tools` and must not replace the user's enabled tool set.
+6. Exercise the changed prompt or workflow without changing the stable IDs or local skill name.
+
+If more than 128 tools are enabled, reduce the selection in the tool picker or configure `github.copilot.chat.virtualTools.threshold` before the smoke test.
 
 ## Export to Awesome Copilot
 
