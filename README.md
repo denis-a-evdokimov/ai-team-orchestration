@@ -91,7 +91,7 @@ After Dev hands off, the Producer records the full candidate commit ID in a live
 ### 6. Decide and merge
 
 ```text
-@ai-team-producer Confirm the current PR head equals the Delivery Ledger candidate, every planned check and selected gate is bound to that candidate, and required approval is recorded. Then regular-merge, run selected post-merge checks, and complete the authoritative PROJECT_BRIEF.md Sections 7 and 8 update. Archive evidence separately only if project policy requires it.
+@ai-team-producer Confirm every planned check and selected gate is bound to the Delivery Ledger Candidate ID and required approval is recorded. Regular-merge with an atomic expected-head guard equal to that Candidate ID, or a protected merge queue that revalidates candidate-bound evidence. A guard failure means Hold. Then run selected post-merge checks and complete the authoritative PROJECT_BRIEF.md Sections 7 and 8 update. Archive evidence separately only if project policy requires it.
 ```
 
 ## How It Works
