@@ -21,7 +21,7 @@ npm run validate
 npm test
 ```
 
-The validator checks standalone plugin metadata, the constrained frontmatter fields this repository relies on, relative Markdown links, stable IDs, legacy references, and synchronization configuration. It deliberately does not claim full YAML validation; Awesome Copilot's validators remain authoritative downstream. Tests exercise the exporter entirely in temporary repositories. `AI_TEAM_VALIDATE_ROOT` exists solely for those isolated validator fixtures; normal validation leaves it unset.
+The validator checks standalone plugin metadata, the constrained frontmatter fields this repository relies on, relative Markdown links, stable IDs, legacy references, and synchronization configuration. It deliberately does not claim full YAML validation; Awesome Copilot's validators remain authoritative downstream. Tests execute copied validators and exporters entirely inside temporary repository fixtures.
 
 ## Direct plugin smoke test
 
@@ -50,11 +50,11 @@ git fetch upstream main
 git switch --no-track --create feature/sync-ai-team-orchestration-<version> upstream/main
 ```
 
-Both check and write require `upstream/main` to exist and be an ancestor of the attached target feature branch, and refuse target `main` or `staged` and detached HEAD. This proves the branch was created from the current fetched upstream baseline while allowing reruns after target commits. Write additionally refuses staged files, untracked files, and other dirty worktree changes.
+Both check and prepare require `upstream/main` to exist and be an ancestor of the attached target feature branch, and refuse target `main` or `staged` and detached HEAD. This proves the branch was created from the current fetched upstream baseline while allowing reruns after target commits. Prepare additionally refuses staged files, untracked files, and other dirty worktree changes.
 
 ### 2. Check and export from this repository
 
-Commit the canonical agents, complete skill tree, plugin metadata, and synchronization configuration on this feature branch before exporting. Both check and write read managed source bytes from the committed `HEAD` and refuse canonical `main` or `staged`, detached HEAD, staged changes, and any tracked or untracked dirty worktree state.
+Commit the canonical agents, complete skill tree, plugin metadata, and synchronization configuration on this feature branch before exporting. Both check and prepare read managed source bytes from the committed `HEAD` and refuse canonical `main` or `staged`, detached HEAD, staged changes, and any tracked or untracked dirty worktree state. The patch output parent directory must already exist, must not be a link/reparse point, and must be outside both repositories.
 
 From the clean, committed canonical checkout:
 
@@ -62,11 +62,13 @@ From the clean, committed canonical checkout:
 npm run validate
 npm test
 npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:write -- --target <awesome-copilot-checkout>
+npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
+git -C <awesome-copilot-checkout> apply --check <patch-file>
+git -C <awesome-copilot-checkout> apply <patch-file>
 npm run awesome:check -- --target <awesome-copilot-checkout>
 ```
 
-The first check normally exits 1 when an update is pending. Write mode constructs the exact managed change in a private temporary no-hardlink clone, verifies its binary/full-index Git patch, runs `git apply --check`, and then applies it to the target working tree with `git apply`. It never stages the result. After write mode, the final check must exit 0.
+The first check normally exits 1 when an update is pending. Prepare mode constructs the exact managed change in a private temporary no-hardlink clone and verifies its binary/full-index Git patch. It never applies, stages, commits, or pushes target changes. Recheck the target immediately before applying the prepared patch with your trusted Git client; then the final canonical check must exit 0. Do not apply if the target changed, developed links/reparse points, or no longer has the expected clean feature-branch state.
 
 ### 3. Validate and build in Awesome Copilot
 
