@@ -98,12 +98,15 @@ A missing upstream is acceptable before first push. An existing upstream equals 
 
 ### Push
 
-Immediately before pushing, verify the effective destination and current branch, then use a fixed full refspec:
+After every candidate file is committed and all final Dev checks pass, verify that the worktree is still clean, the effective destination and current branch still match the plan, and the branch ref is a commit. The `rev-parse` output is the full tested local Candidate ID; capture it before the immediately following push. Do not edit or commit between capture and push.
 
 ```text
+git status --short
 git remote get-url --push --all PUSH_REMOTE
 git branch --show-current
+git rev-parse --verify --end-of-options refs/heads/WORKING_BRANCH
+git cat-file -t refs/heads/WORKING_BRANCH
 git push --set-upstream PUSH_REMOTE refs/heads/WORKING_BRANCH:refs/heads/WORKING_BRANCH
 ```
 
-Never add a force option.
+Require empty status output, the exact approved URL, the exact working branch, and object type `commit`. Never add a force option. After push, compare the observed application PR head with the captured Candidate ID before posting a Candidate Packet.

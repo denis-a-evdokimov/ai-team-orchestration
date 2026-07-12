@@ -47,6 +47,7 @@ Lessons learned from real multi-agent projects. Each anti-pattern was encountere
 | Call a CEO risk override a gate PASS | Record it as explicit accepted risk; preserve the gate owner's actual verdict | Authority to accept risk is different from evidence that a gate passed. |
 | Manually copy hashes when Git or the platform already binds evidence | Use PR/check association, evidence-branch ancestry, or an immutable artifact; use an explicit commit ID only when needed | The invariant is an unambiguous candidate-to-evidence relationship, not repeated hash paperwork. |
 | Treat a generic PR comment, description, branch, or bare PR URL as commit-bound | Native metadata binds the commit, or generic text contains the full Candidate ID and immutable evidence ID | Mutable/shared text can remain visible after the PR head changes. |
+| Resolve the Candidate ID only after push | Capture the tested local commit ID before push, then require the observed PR head to equal it before posting the Candidate Packet | A concurrent or unexpected push must not inherit Dev-check evidence produced for an older commit. |
 | Commit a QA sign-off to the frozen application branch | Use a PR artifact or a separate evidence branch based on the candidate | Appending the report to the application branch creates a new candidate. Evidence-branch ancestry can identify what QA tested without changing it. |
 | QA modifies application source | QA edits test automation and QA documentation, files issues, and lets Dev fix source on the same branch | QA can improve tests and evidence without becoming the implementation author. |
 | Close issues before planned verification | Dev fixes → affected selected checks/gates re-verify → authorized owner closes | A commit or author assertion does not prove the reported behavior is fixed. |
@@ -55,7 +56,7 @@ Lessons learned from real multi-agent projects. Each anti-pattern was encountere
 
 | Don't | Do Instead | Why |
 |-------|------------|-----|
-| Assume chats share memory | Files are the shared memory | Each chat is a fresh context. PROJECT_BRIEF.md and progress.md are the only things that survive. |
+| Assume chats share memory | Use the project brief, pre-freeze progress/Done files, and the live PR Delivery Ledger/artifacts | Each chat is a fresh context. Durable repository and PR artifacts preserve both implementation recovery and frozen-candidate state. |
 | Keep decisions in conversation | Write decisions to files | Decisions made in chat are lost when the chat closes. Write to docs/ or GitHub Issues. |
 | Copy real secrets or end-user identifying information into evidence | Redact or synthesize logs, screenshots, fixtures, docs, and issues | Diagnostic evidence must not create a second privacy or security incident. |
 | Relay unbounded raw logs between teams | Summarize the relevant, redacted lines with component, candidate/environment, steps, expected, and actual | Concise evidence preserves context and avoids propagating sensitive data. |

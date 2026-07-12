@@ -553,7 +553,11 @@ test('validator rejects an empty code/config Dev-check contract', (context) => {
 test('validator rejects a live Candidate Packet without full candidate identity', (context) => {
   const targetRoot = createRepositoryCopy(context);
   const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
-  mutateText(workflowPath, '- **Candidate ID:** [full commit ID]', '- **Current branch:** [branch]');
+  mutateText(
+    workflowPath,
+    '- **Candidate ID:** [full tested local commit ID captured before push]',
+    '- **Current branch:** [branch]',
+  );
   const result = runValidator(targetRoot);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Candidate Packet — Dev must contain "\*\*Candidate ID:\*\*"/);
@@ -646,6 +650,7 @@ test('safe Git fixed forms are unquoted for PowerShell POSIX and Command Prompt 
   const safeGit = readFileSync(safeGitPath, 'utf8');
   assert.match(safeGit, /same fixed forms work in PowerShell, POSIX shells, and Windows Command Prompt/);
   assert.match(safeGit, /git remote get-url --all BASE_REMOTE/);
+  assert.match(safeGit, /git rev-parse --verify --end-of-options refs\/heads\/WORKING_BRANCH/);
   assert.match(safeGit, /git push --set-upstream PUSH_REMOTE refs\/heads\/WORKING_BRANCH:refs\/heads\/WORKING_BRANCH/);
   assert.doesNotMatch(safeGit, /git (?:remote|fetch|switch|push)[^\n]*'BASE_REMOTE'/);
   const result = runValidator(targetRoot);
@@ -756,12 +761,55 @@ test('validator enforces push freeze PR then Candidate Packet ordering', (contex
   const devPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');
   mutateText(
     devPath,
-    'push using the fixed full refspec; the branch freezes immediately. Create or update the PR',
-    'push using the fixed full refspec. Post the Candidate Packet, then create or update the PR',
+    'Immediately push that branch with the fixed full refspec; the branch freezes at push. Create or update the PR',
+    'Post the Candidate Packet, then push that branch with the fixed full refspec and create or update the PR',
   );
   const result = runValidator(targetRoot);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Dev protocol must contain/);
+});
+
+test('validator requires pre-push candidate capture and observed-head equality', (context) => {
+  for (const mutation of [
+    {
+      oldText: 'capture the full tested local commit ID before pushing',
+      newText: 'resolve the current head after pushing',
+    },
+    {
+      oldText: 'confirm the observed application PR head equals that captured ID',
+      newText: 'treat whichever PR head is current as the candidate',
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const devPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');
+    mutateText(devPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Dev protocol must contain/);
+  }
+});
+
+test('validator rejects hidden shared agent lifecycle sections', (context) => {
+  for (const wrapper of [
+    (section) => `<!--\n${section}\n-->`,
+    (section) => `\`\`\`\`\`\`text\n${section}\n\`\`\`\`\`\``,
+    (section) => section.split('\n').map((line) => `    ${line}`).join('\n'),
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    for (const agentId of ['ai-team-dev', 'ai-team-producer', 'ai-team-qa']) {
+      const agentPath = path.join(targetRoot, 'agents', `${agentId}.agent.md`);
+      const contents = readFileSync(agentPath, 'utf8');
+      const start = contents.indexOf('## Shared Delivery Lifecycle');
+      const end = contents.indexOf('\n## ', start + 1);
+      assert.notEqual(start, -1);
+      assert.notEqual(end, -1);
+      const section = contents.slice(start, end);
+      writeFileSync(agentPath, `${contents.slice(0, start)}${wrapper(section)}${contents.slice(end)}`, 'utf8');
+    }
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Expected exactly one level-2 section "Shared Delivery Lifecycle"/);
+  }
 });
 
 test('validator rejects CommonMark indentation decoys and comment splicing', (context) => {
@@ -806,8 +854,8 @@ test('validator rejects unexpected executable fences and command-like prose in S
     const safeGitPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'safe-git-values.md');
     mutateText(
       safeGitPath,
-      'Immediately before pushing, verify the effective destination and current branch, then use a fixed full refspec:',
-      `${insertion}Immediately before pushing, verify the effective destination and current branch, then use a fixed full refspec:`,
+      'After every candidate file is committed and all final Dev checks pass, verify that the worktree is still clean, the effective destination and current branch still match the plan, and the branch ref is a commit.',
+      `${insertion}After every candidate file is committed and all final Dev checks pass, verify that the worktree is still clean, the effective destination and current branch still match the plan, and the branch ref is a commit.`,
     );
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
@@ -831,6 +879,36 @@ test('validator rejects critical state exit and artifact authority mutations', (
     const targetRoot = createRepositoryCopy(context);
     const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
     mutateText(workflowPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, mutation.expected);
+  }
+});
+
+test('validator rejects stale-evidence freeze and capability contradictions', (context) => {
+  for (const mutation of [
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
+      oldText: 'Every new candidate makes prior gate evidence stale by default.',
+      newText: 'Every new candidate keeps prior gate evidence current by default.',
+      expected: /evidence section must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
+      oldText: 'the candidate remained frozen after the last current evidence.',
+      newText: 'the candidate may move after the last current evidence.',
+      expected: /merge\/status section must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-qa.agent.md'],
+      oldText: 'explicitly hand it off and never claim the mutation happened.',
+      newText: 'claim the mutation happened when a capability is unavailable.',
+      expected: /capability section must contain/,
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const filePath = path.join(targetRoot, ...mutation.relativePath);
+    mutateText(filePath, mutation.oldText, mutation.newText);
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
     assert.match(result.stderr, mutation.expected);

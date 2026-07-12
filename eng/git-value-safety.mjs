@@ -40,8 +40,11 @@ export const SAFE_GIT_FIXED_COMMANDS = [
   'git branch --show-current',
   'git config --get branch.WORKING_BRANCH.remote',
   'git config --get branch.WORKING_BRANCH.merge',
+  'git status --short',
   'git remote get-url --push --all PUSH_REMOTE',
   'git branch --show-current',
+  'git rev-parse --verify --end-of-options refs/heads/WORKING_BRANCH',
+  'git cat-file -t refs/heads/WORKING_BRANCH',
   'git push --set-upstream PUSH_REMOTE refs/heads/WORKING_BRANCH:refs/heads/WORKING_BRANCH',
 ];
 

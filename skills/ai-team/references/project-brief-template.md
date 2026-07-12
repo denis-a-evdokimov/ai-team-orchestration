@@ -121,7 +121,7 @@ Before an implementation session finishes, Dev must:
 1. Update `docs/sprint-N/progress.md` with implementation tasks, bugs, decisions, and Dev-check results. Link the plan rather than copying gate selection/status.
 2. Write or update `docs/sprint-N/done.md` as the pre-freeze implementation summary, including incomplete work, setup, known issues, Dev checks, and proposed Sections 7/8 changes. Do not include candidate or live gate state.
 3. Commit those context files before freezing the candidate.
-4. Push and post a live Candidate Packet on the PR with the full application commit object ID, plan, delta, Dev checks, issues, blockers, and next owner Producer.
+4. Capture the full tested local commit ID, immediately push and freeze, confirm the observed application PR head equals that captured ID, then post the live Candidate Packet with both matching identities, plan, delta, Dev checks, issues, blockers, and next owner Producer. Mismatch means Hold with no packet.
 5. Stop changing the application branch. Post-freeze state lives in the Producer-owned Delivery Ledger on the PR. Push again only after a Producer-authored Branch Reopen Packet whose prior Candidate ID equals current application head.
 6. Propose any Sections 7 and 8 changes without claiming final sprint, gate, or merge state.
 
@@ -198,7 +198,7 @@ The CEO/maintainer defines acceptable risk, final-approval authority, and the mi
 
 - Select gates in proportion to risk. Code/config always has concrete evidence. High-risk triggers are authentication/authorization/identity; secrets or EUII/privacy; destructive or irreversible data changes; privileges/permissions/deployment/CI/CD/supply-chain; and declared project safety invariants. Each requires security-focused evidence or explicit CEO/maintainer risk acceptance. Unresolved blocker/major findings always block merge.
 - A gate marked `not required` is not an exemption or failure. A baseline reduction is CEO/maintainer-owned; Producer cannot waive another gate owner's blocker.
-- Dev's candidate push freezes the application branch immediately. Dev then creates/updates the PR and posts a Candidate Packet with the full Candidate ID; Producer records it in the Delivery Ledger. A block routes to Producer and does not reopen the branch.
+- Dev captures the full tested local commit ID before push. The push freezes the application branch immediately. Dev then creates/updates the PR and posts a Candidate Packet only after the observed application PR head equals that captured ID; Producer independently verifies and records it in the Delivery Ledger. A mismatch means Hold. A block routes to Producer and does not reopen the branch.
 - Only a live Producer Branch Reopen Packet authorizes a scoped fix. A replacement candidate makes prior verdicts stale. An unaffected gate owner may carry forward only after reviewing the actual delta and posting a packet binding old/new Candidate IDs.
 - When independent review is selected, the reviewer is not an author and Dev self-review does not satisfy that gate. When QA is selected, QA evaluates the frozen candidate or immutable preview and records the environment.
 - Candidate ID is always the full Git commit object ID. Native reviews/checks may bind through platform metadata; every generic text artifact names it explicitly. Producer compares it with current application head before merge.

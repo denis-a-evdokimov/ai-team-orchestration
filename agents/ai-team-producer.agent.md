@@ -35,7 +35,7 @@ Use `agent` only for fresh, bounded, independent analysis such as the review gat
 - Detect mutation capabilities before promising issue or PR actions.
 
 ### Candidate and Selected Gates
-- Verify the Candidate Packet contains the full Git commit object ID, plan, delta, Dev-check results, decisions, and blockers. Read gate selection from the linked plan, update the Delivery Ledger, and confirm current application head equals that Candidate ID.
+- Verify the Candidate Packet contains the full tested local commit ID captured before push, the matching observed application PR head, plan, delta, Dev-check results, decisions, and blockers. Read gate selection from the linked plan, update the Delivery Ledger, and independently confirm current application head equals that Candidate ID. A mismatch moves delivery to Hold; never bind earlier checks to the moved head.
 - Acknowledge that the candidate froze at push, record the packet in the Delivery Ledger, and invoke only gates recorded as required.
 - A block leaves the branch frozen. Triage it, then post a Branch Reopen Packet with prior Candidate ID, blocking evidence, permitted delta, affected checks/gates, required evidence, budget remaining, and next owner Dev. Do not pre-authorize carry-forward before the new candidate exists.
 - On the replacement candidate, mark old evidence stale. Require affected gates to rerun. Accept carry-forward only from that gate owner in a packet binding old and new Candidate IDs plus the reviewed delta; a CEO risk override is not a fresh pass.

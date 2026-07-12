@@ -198,35 +198,6 @@ export function documentPreamble(markdown) {
   return lines.slice(0, firstH2?.index ?? lines.length).join('\n').trim();
 }
 
-export function parseUniqueBlockquoteFields(markdown, expectedFields) {
-  const values = new Map();
-  const { structural } = structuralLines(markdown);
-  for (const entry of structural) {
-    if (entry.fenced) {
-      continue;
-    }
-    const match = /^>\s+([^:]+):\s*(.+?)\s*$/.exec(entry.line);
-    if (!match) {
-      continue;
-    }
-    const field = match[1].trim();
-    if (!expectedFields.includes(field)) {
-      continue;
-    }
-    if (values.has(field)) {
-      throw new Error(`Duplicate field "${field}".`);
-    }
-    values.set(field, match[2].trim());
-  }
-
-  for (const field of expectedFields) {
-    if (!values.has(field)) {
-      throw new Error(`Missing field "${field}".`);
-    }
-  }
-  return values;
-}
-
 export function parseOrderedBlockquoteFields(markdown, expectedFields, expectedTitle) {
   const { structural } = structuralLines(markdown);
   const visible = structural.filter((entry) => !entry.fenced);

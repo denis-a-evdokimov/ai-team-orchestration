@@ -1125,25 +1125,41 @@ function preparePatch(plan, inspection, outputPath, logger, patchConsumer) {
   try {
     patchWorkspace = createPatchClone(plan, actions);
     const resolvedOutput = path.resolve(outputPath);
-    if (isContainedPath(plan.sourceRoot.realPath, resolvedOutput, true)
-      || isContainedPath(plan.targetRoot.realPath, resolvedOutput, true)) {
+    const outputDirectory = createRootInfo(
+      path.dirname(resolvedOutput),
+      'Patch output directory',
+    );
+    const safeOutput = path.join(outputDirectory.realPath, path.basename(resolvedOutput));
+    if (isContainedPath(plan.sourceRoot.realPath, safeOutput, true)
+      || isContainedPath(plan.targetRoot.realPath, safeOutput, true)) {
       throw new Error('Patch output must be outside both canonical source and Awesome target repositories.');
     }
-    const outputStat = tryLstat(resolvedOutput);
+    const outputStat = tryLstat(safeOutput);
     if (outputStat) {
-      throw new Error(`Patch output must not already exist: ${resolvedOutput}`);
+      throw new Error(`Patch output must not already exist: ${safeOutput}`);
     }
-    mkdirSync(path.dirname(resolvedOutput), { recursive: true });
-    writeFileSync(resolvedOutput, patchWorkspace.patch, { flag: 'wx' });
-    logger(`Prepared verified binary patch: ${resolvedOutput}`);
+
+    const recheckedOutputDirectory = createRootInfo(
+      outputDirectory.path,
+      'Patch output directory',
+    );
+    if (!sameFilesystemPath(recheckedOutputDirectory.realPath, outputDirectory.realPath)) {
+      throw new Error('Patch output directory changed during preparation.');
+    }
+    if (tryLstat(safeOutput)) {
+      throw new Error(`Patch output must not already exist: ${safeOutput}`);
+    }
+
+    writeFileSync(safeOutput, patchWorkspace.patch, { flag: 'wx' });
+    logger(`Prepared verified binary patch: ${safeOutput}`);
     if (patchConsumer) {
-      patchConsumer({ actions, patch: patchWorkspace.patch, patchPath: resolvedOutput, targetRoot: plan.targetRoot });
+      patchConsumer({ actions, patch: patchWorkspace.patch, patchPath: safeOutput, targetRoot: plan.targetRoot });
     }
     for (const action of actions) {
       logger(`${action.kind.toUpperCase()} ${action.relativePath}`);
     }
     logger('The target checkout was not modified. Recheck it, then apply the patch explicitly with your trusted Git client.');
-    return { actions, patchPath: resolvedOutput };
+    return { actions, patchPath: safeOutput };
   } finally {
     if (patchWorkspace) {
       rmSync(patchWorkspace.temporaryRoot, { force: true, recursive: true });

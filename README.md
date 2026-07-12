@@ -69,7 +69,7 @@ Before Dev starts, run a team consilium, classify the change risk, record at lea
 ```
 @ai-team-dev Read PROJECT_BRIEF.md, then docs/sprint-1/plan.md. Execute Sprint 1.
 Preflight a clean worktree, then use the target branch, base remote/ref, push remote, and working branch recorded in the sprint plan. Never substitute a default branch for those plan values.
-Implement and run the selected Dev checks, push and freeze immediately, create/update the PR, resolve its full current-head commit ID, and post the Candidate Packet. If PR mutation is unavailable, remain frozen while handing off the exact PR and packet payload.
+Implement and run the selected Dev checks, capture the full tested local commit ID, then immediately push and freeze. Create/update the PR and post the Candidate Packet only after its observed head equals that captured ID. A mismatch means Hold, not reassignment of earlier checks. If PR mutation is unavailable, remain frozen while handing off the captured ID plus exact PR and draft packet payload for equality verification.
 ```
 
 The CEO/maintainer sets acceptable risk and only they may approve reducing the project baseline. A low-risk project may use Dev-authored checks without independent review or QA, but every code/config candidate has at least one concrete check. Authentication/authorization, secrets or EUII, destructive data, privilege/deployment, supply-chain, and declared safety-invariant changes require applicable security-focused evidence or explicit CEO/maintainer risk acceptance.

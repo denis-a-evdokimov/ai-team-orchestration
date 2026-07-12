@@ -93,7 +93,7 @@ Use the [brainstorm format](./references/brainstorm-format.md) to produce real d
 Use the [sprint plan template](./references/sprint-plan-template.md). Every sprint gets:
 - `docs/sprint-N/plan.md` — prioritized tasks, success criteria
 - `docs/sprint-N/progress.md` — live tracker, enables recovery
-- `docs/sprint-N/done.md` — handoff doc written at sprint end
+- `docs/sprint-N/done.md` — pre-freeze implementation handoff
 
 ### 4. Deliver Through Selected PR Gates
 
@@ -101,17 +101,17 @@ The [Delivery Workflow](./references/delivery-workflow.md) is canonical:
 
 **Plan → Implement and Dev-check → Freeze candidate → Selected gates → Fix/re-freeze loop → Producer/CEO merge decision → regular merge → Selected post-merge checks → Authoritative status update**
 
-The CEO/maintainer sets acceptable risk; the Producer records proportionate checks and gates before implementation. Every code/config candidate has at least one concrete check. High-risk surfaces receive applicable security-focused evidence unless the CEO/maintainer explicitly accepts the risk. Dev freezes the application branch at handoff and posts a Candidate Packet. The Producer owns a live Delivery Ledger on the PR. A blocking gate reports only to the Producer; Dev acts only after a Producer-authored Branch Reopen Packet. The Producer verifies the current PR head and every required evidence binding before the Producer/CEO merge decision.
+The CEO/maintainer sets acceptable risk; the Producer records proportionate checks and gates before implementation. Every code/config candidate has at least one concrete check. High-risk surfaces receive applicable security-focused evidence unless the CEO/maintainer explicitly accepts the risk. Dev captures the tested commit ID before push, freezes the application branch at push, and posts a Candidate Packet only after the observed PR head matches. The Producer owns a live Delivery Ledger on the PR. A blocking gate reports only to the Producer; Dev acts only after a Producer-authored Branch Reopen Packet. The Producer verifies the current PR head and every required evidence binding before the Producer/CEO merge decision.
 
 Evidence may be bound automatically through PR reviews/checks, Git ancestry on a separate evidence branch, or an immutable build/preview; manually copying a commit hash is required only when no such association exists. Every role detects its available mutation capabilities and hands off exact payloads rather than claiming unavailable actions.
 
 ## Context Recovery
 
-Before the session approaches its context limit, save state and start fresh:
+Before the session approaches its context limit, save state and start fresh. If Dev is open or reopened, commit the implementation recovery files before freezing. If the candidate is already frozen, do not edit the application branch; update the live PR artifact owned by the current role instead.
 
 **Before closing:**
-1. Update `docs/sprint-N/progress.md` with current status
-2. Write or update `docs/sprint-N/done.md` with context-only implementation handoff information
+1. While Dev may push, update `docs/sprint-N/progress.md` with implementation status
+2. Before candidate freeze, write or update `docs/sprint-N/done.md` with implementation handoff information
 3. Propose any `PROJECT_BRIEF.md` sections 7+8 changes to the Producer
 
 Keep candidate identity and live gate evidence in durable PR/check metadata, Git ancestry, immutable artifacts, or explicit commit IDs as appropriate. Do not change the frozen application branch merely to append a report. The Producer owns authoritative sprint status and chooses the project's normal documentation workflow; a separate docs-only archive PR is optional.

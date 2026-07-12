@@ -507,6 +507,50 @@ test('prepare mode rejects patch output inside source or target repository', (co
   }
 });
 
+test('prepare mode rejects missing or linked patch output directories', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const externalRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-output-parent-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, externalRoot);
+
+  const missingOutput = path.join(externalRoot, 'missing', 'sync.patch');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: missingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /Patch output directory does not exist/,
+  );
+  assert.equal(existsSync(missingOutput), false);
+
+  const linkedDirectory = path.join(externalRoot, 'linked-output');
+  try {
+    createDirectoryLink(fixture.targetRoot, linkedDirectory);
+  } catch (error) {
+    context.skip(`Directory links are unavailable: ${error.message}`);
+    return;
+  }
+  const escapedOutput = path.join(linkedDirectory, 'escaped.patch');
+  const targetBefore = runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: escapedOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /symbolic link, junction, or reparse point/,
+  );
+  assert.equal(existsSync(path.join(fixture.targetRoot, 'escaped.patch')), false);
+  assert.equal(runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all'), targetBefore);
+});
+
 test('global process-capable Git filters are ignored during checks', (context) => {
   const sourceRoot = createSourceFixture();
   const fixture = createTargetFixture();

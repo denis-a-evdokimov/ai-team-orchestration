@@ -65,11 +65,10 @@ Save as `docs/sprint-N/plan.md`:
 - Checkpoint commit after phase
 
 ### Phase 3: Evidence & Handoff
-- Run every Dev check selected above
-- Update and commit progress and implementation handoff files
-- Resolve or disposition findings from selected Dev checks
-- Push and freeze the candidate branch immediately
-- Create/update the PR, resolve its current head, post a Candidate Packet with that full commit object ID, then stop pushing until the Producer posts a Branch Reopen Packet
+- Update and commit all candidate files, including progress and implementation handoff files
+- Run every final Dev check selected above against that clean committed candidate; resolve findings, commit fixes, and rerun affected checks until the candidate remains clean
+- Capture the full tested local commit ID, immediately push that branch, and freeze it
+- Create/update the PR, confirm its observed application head equals the captured ID, post the Candidate Packet, then stop pushing until the Producer posts a Branch Reopen Packet; mismatch means Hold with no packet
 
 ## Success Criteria
 
@@ -98,7 +97,7 @@ Copy-paste this into the Dev Team chat to start execution:
 >
 > Implement and test incrementally. Reference issues in commits and the PR with `Refs #NN`; do not imply closure before the verification selected in this plan. Update docs/sprint-N/progress.md after each phase.
 >
-> Before freezing, commit docs/sprint-N/progress.md and docs/sprint-N/done.md as implementation-only summaries. Run every selected Dev check. Re-verify the approved push URL/current branch and push with the Safe Git reference's fixed full refspec; the branch freezes immediately. Create/update the PR against the target branch, resolve its full application-head commit object ID, then post the canonical Candidate Packet. If PR mutation is unavailable, remain frozen and hand off the exact PR creation plus packet payload. Push again only after a Producer-authored Branch Reopen Packet whose prior Candidate ID equals current application head; stay within its permitted delta, then post a replacement Candidate Packet and freeze.
+> Before freezing, commit docs/sprint-N/progress.md and docs/sprint-N/done.md as implementation-only summaries. Run every selected Dev check. Re-verify the approved push URL/current branch, capture the full tested local commit ID, and immediately push with the Safe Git reference's fixed full refspec; the branch freezes at push. Create/update the PR against the target branch and confirm its observed application head equals the captured ID before posting the canonical Candidate Packet. If they differ, post no packet and report Hold to Producer. If PR mutation is unavailable, remain frozen and hand off the captured ID plus exact PR creation and draft packet payload; the authorized actor confirms equality before posting it. Push again only after a Producer-authored Branch Reopen Packet whose prior Candidate ID equals current application head; stay within its permitted delta, then repeat the capture/push/equality sequence for the replacement candidate.
 >
 > Follow Sections 12-15 of PROJECT_BRIEF.md. Never merge.
 ```
