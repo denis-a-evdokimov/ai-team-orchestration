@@ -1,11 +1,11 @@
 # Code Review — `feature/sync-accepted-ai-team-fixes`
 
-**Date:** 2026-07-11  
-**Verdict:** **CHANGES-REQUESTED — not ready for public publication**  
-**Reviewed baseline:** `origin/main` at `54b6837aa16aa9476238e3b7414a01fe3d33f58b`  
-**Branch HEAD:** `21a1843924df3787d26054ef03f2373ee29327b3`  
-**Merge base:** `065ac2925242b0b24d6e6846bb4c5ea8926becd8`  
-**Scope:** two branch commits plus all then-current tracked working-tree changes; 12 files, +496/-227; no untracked files at review start  
+**Date:** 2026-07-11
+**Verdict:** **CHANGES-REQUESTED — not ready for public publication**
+**Reviewed baseline:** `origin/main` at `54b6837aa16aa9476238e3b7414a01fe3d33f58b`
+**Branch HEAD:** `21a1843924df3787d26054ef03f2373ee29327b3`
+**Merge base:** `065ac2925242b0b24d6e6846bb4c5ea8926becd8`
+**Scope:** two branch commits plus all then-current tracked working-tree changes; 12 files, +496/-227; no untracked files at review start
 **Important:** this report and the bootstrapped review profile were created after review and are not part of the reviewed candidate.
 
 ## Executive Summary
