@@ -54,11 +54,13 @@ From the clean, committed canonical checkout:
 npm run validate
 npm test
 npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:write -- --target <awesome-copilot-checkout>
+npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
+git -C <awesome-copilot-checkout> apply --check <patch-file>
+git -C <awesome-copilot-checkout> apply <patch-file>
 npm run awesome:check -- --target <awesome-copilot-checkout>
 ```
 
-The first check normally exits 1 when an update is pending. Write mode constructs the exact managed change in a private temporary no-hardlink clone, verifies its binary/full-index Git patch, runs `git apply --check`, and then applies it to the target working tree with `git apply`. It never stages the result. After write mode, the final check must exit 0.
+The first check normally exits 1 when an update is pending. Prepare mode constructs the exact managed change in a private temporary no-hardlink clone and verifies its binary/full-index Git patch. It never applies, stages, commits, or pushes target changes. Recheck the target immediately before applying the prepared patch with your trusted Git client; then the final canonical check must exit 0. Do not apply if the target changed, developed links/reparse points, or no longer has the expected clean feature-branch state.
 
 ### 3. Validate and build in Awesome Copilot
 

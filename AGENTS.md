@@ -48,9 +48,9 @@ Check or write an Awesome Copilot checkout explicitly:
 
 ```text
 npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:write -- --target <awesome-copilot-checkout>
+npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
 ```
 
-`AWESOME_COPILOT_ROOT` may replace `--target`. Both check and write require this canonical source to be committed, clean, and attached to a feature branch with no staged changes, and require the target to be attached to a non-`main`, non-`staged` branch. Write mode additionally requires a clean target Git worktree.
+`AWESOME_COPILOT_ROOT` may replace `--target`. Both check and prepare require this canonical source to be committed, clean, and attached to a feature branch with no staged changes, and require the target to be attached to a non-`main`, non-`staged` branch. Prepare mode additionally requires a clean target Git worktree.
 
-The target must have a fetched `upstream/main` ref that is an ancestor of its feature-branch `HEAD`. Write mode generates and verifies a binary Git patch in a private temporary no-hardlink clone, then applies it to the target working tree without staging.
+The target must have a direct fetched `refs/remotes/upstream/main` ref that is an ancestor of feature-branch `HEAD`, with no symbolic ref or graft spoofing. Prepare mode generates and verifies a binary Git patch in a private temporary no-hardlink clone and never applies it to the target. The user rechecks the checkout, applies the patch explicitly, and reruns `awesome:check`.
