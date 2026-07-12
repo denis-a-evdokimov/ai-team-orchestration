@@ -237,8 +237,8 @@ function decodeGitText(buffer, label) {
   }
 }
 
-function sanitizedGitEnvironment() {
-  const environment = {};
+export function sanitizedGitEnvironment() {
+  const environment = Object.create(null);
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.toUpperCase().startsWith('GIT_')) {
       environment[key] = value;
@@ -874,6 +874,16 @@ function inspectPlan(plan, allowedCreatedPaths = new Set()) {
       continue;
     }
 
+    try {
+      absolutePath = assertManagedRegularFile(
+        plan.targetRoot,
+        file.relativePath,
+        `Managed target ${file.relativePath}`,
+      );
+    } catch (error) {
+      blockers.push(error.message);
+      continue;
+    }
     const matchesDesiredBytes = file.bytes !== null
       && readFileSync(absolutePath).equals(file.bytes);
     const isTracked = plan.trackedTargetFiles.has(file.relativePath)
