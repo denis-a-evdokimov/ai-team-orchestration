@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   sanitizedGitEnvironment,
-  syncAwesomeCopilot,
+  syncAwesomeCopilot as syncAwesomeCopilotCore,
   transformSkillMarkdown,
 } from './sync-awesome-copilot.mjs';
 
@@ -87,6 +87,14 @@ function createSourceFixture(branch = 'feature/source-test') {
   const scriptTarget = path.join(sourceRoot, 'eng', 'sync-awesome-copilot.mjs');
   mkdirSync(path.dirname(scriptTarget), { recursive: true });
   cpSync(fileURLToPath(new URL('./sync-awesome-copilot.mjs', import.meta.url)), scriptTarget);
+  cpSync(
+    fileURLToPath(new URL('./path-safety.mjs', import.meta.url)),
+    path.join(sourceRoot, 'eng', 'path-safety.mjs'),
+  );
+  cpSync(
+    fileURLToPath(new URL('./sync-manifest-contract.mjs', import.meta.url)),
+    path.join(sourceRoot, 'eng', 'sync-manifest-contract.mjs'),
+  );
   initializeGitRepository(sourceRoot, branch);
   return sourceRoot;
 }
@@ -118,6 +126,7 @@ function createTargetFixture(branch = 'feature/sync-test') {
   writeFileSync(path.join(targetSkillRoot, 'stale.txt'), 'remove me\r\n', 'utf8');
   writeFileSync(path.join(targetRoot, 'agents', 'ai-team-dev.agent.md'), 'outdated\r\n', 'utf8');
   initializeGitRepository(targetRoot, branch);
+  runGit(targetRoot, 'remote', 'add', 'upstream', 'https://github.com/github/awesome-copilot.git');
   setUpstreamMain(targetRoot);
   return { pluginPath, targetRoot, targetSkillRoot };
 }
@@ -134,6 +143,39 @@ function writeManifest(sourceRoot, manifest) {
 function createDirectoryLink(targetPath, linkPath) {
   mkdirSync(path.dirname(linkPath), { recursive: true });
   symlinkSync(targetPath, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+}
+
+function testSyncOptions(options) {
+  if (!options.write) {
+    return options;
+  }
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-sync-patch-output-'));
+  const output = path.join(outputRoot, 'sync.patch');
+  return {
+    ...options,
+    output,
+    patchConsumer: ({ patch }) => {
+      const targetRoot = options.targetRoot;
+      const check = spawnSync('git', ['-C', targetRoot, 'apply', '--check', '--whitespace=nowarn', '-'], { input: patch });
+      assert.equal(check.status, 0, check.stderr?.toString());
+      const apply = spawnSync('git', ['-C', targetRoot, 'apply', '--whitespace=nowarn', '-'], { input: patch });
+      assert.equal(apply.status, 0, apply.stderr?.toString());
+      rmSync(outputRoot, { force: true, recursive: true });
+    },
+  };
+}
+
+function syncAwesomeCopilot(options) {
+  const result = syncAwesomeCopilotCore(testSyncOptions(options));
+  if (options.write) {
+    const check = syncAwesomeCopilotCore({
+      logger: QUIET,
+      sourceRoot: options.sourceRoot,
+      targetRoot: options.targetRoot,
+    });
+    return { ...result, aligned: check.aligned };
+  }
+  return result;
 }
 
 test('skill transform changes only the unique frontmatter name line', () => {
@@ -177,6 +219,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   const initialCheck = syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot });
   assert.equal(initialCheck.aligned, false);
   assert.equal(initialCheck.sourceHead, runGit(sourceRoot, 'rev-parse', 'HEAD'));
+  assert.equal(initialCheck.targetHead, runGit(fixture.targetRoot, 'rev-parse', 'HEAD'));
   assert.equal(initialCheck.pluginVersion, '2.0.0');
   assert.ok(initialCheck.drift.some((item) => item.kind === 'missing'));
   assert.ok(initialCheck.drift.some((item) => item.kind === 'changed'));
@@ -191,6 +234,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.equal(driftCli.status, 1);
   assert.match(driftCli.stdout, /managed drift item/);
   assert.match(driftCli.stdout, /Source HEAD: [a-f0-9]{40,64}/);
+  assert.match(driftCli.stdout, /Target HEAD: [a-f0-9]{40,64}/);
   assert.match(driftCli.stdout, /Plugin version: 2\.0\.0/);
 
   const logs = [];
@@ -202,6 +246,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   });
   assert.equal(writeResult.aligned, true);
   assert.ok(logs.includes(`Source HEAD: ${writeResult.sourceHead}`));
+  assert.ok(logs.includes(`Target HEAD: ${writeResult.targetHead}`));
   assert.ok(logs.includes('Plugin version: 2.0.0'));
   assert.equal(existsSync(path.join(fixture.targetSkillRoot, 'stale.txt')), false);
   assert.match(
@@ -338,7 +383,13 @@ test('target requires upstream/main and requires it to be an ancestor of HEAD', 
   runGit(missing.targetRoot, 'update-ref', '-d', 'refs/remotes/upstream/main');
   assert.throws(
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: missing.targetRoot }),
-    /requires the fetched ref upstream\/main/,
+    /requires the fetched ref refs\/remotes\/upstream\/main/,
+  );
+
+  runGit(missing.targetRoot, 'branch', 'upstream/main', 'HEAD');
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: missing.targetRoot }),
+    /requires the fetched ref refs\/remotes\/upstream\/main/,
   );
 
   const divergent = createTargetFixture();
@@ -353,8 +404,317 @@ test('target requires upstream/main and requires it to be an ancestor of HEAD', 
   assert.equal(runGit(divergent.targetRoot, 'rev-parse', 'HEAD'), head);
   assert.throws(
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: divergent.targetRoot }),
-    /must be based on upstream\/main/,
+    /must be based on refs\/remotes\/upstream\/main/,
   );
+});
+
+test('local upstream/main branch cannot shadow the required remote-tracking ref', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  runGit(fixture.targetRoot, 'update-ref', '-d', 'refs/remotes/upstream/main');
+  runGit(fixture.targetRoot, 'branch', 'upstream/main', 'HEAD');
+
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot }),
+    /requires the fetched ref refs\/remotes\/upstream\/main/,
+  );
+});
+
+test('symbolic upstream ref and nonempty grafts cannot spoof ancestry', (context) => {
+  const sourceRoot = createSourceFixture();
+  registerCleanup(context, sourceRoot);
+
+  const symbolic = createTargetFixture();
+  registerCleanup(context, symbolic.targetRoot);
+  runGit(symbolic.targetRoot, 'symbolic-ref', 'refs/remotes/upstream/main', 'refs/heads/feature/sync-test');
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: symbolic.targetRoot }),
+    /must be a direct remote-tracking ref/,
+  );
+
+  const grafted = createTargetFixture();
+  registerCleanup(context, grafted.targetRoot);
+  const graftsPath = path.resolve(
+    grafted.targetRoot,
+    runGit(grafted.targetRoot, 'rev-parse', '--git-path', 'info/grafts'),
+  );
+  writeFileSync(graftsPath, `${runGit(grafted.targetRoot, 'rev-parse', 'HEAD')}\n`);
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: grafted.targetRoot }),
+    /refuses nonempty Git grafts/,
+  );
+
+  writeFileSync(graftsPath, '   \n');
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: grafted.targetRoot }),
+    /refuses nonempty Git grafts/,
+  );
+});
+
+test('linked-worktree common grafts cannot spoof ancestry', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  const linkedRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-linked-worktree-parent-'));
+  rmSync(linkedRoot, { recursive: true, force: true });
+  context.after(() => rmSync(linkedRoot, { recursive: true, force: true }));
+  runGit(fixture.targetRoot, 'worktree', 'add', '-b', 'feature/linked-test', linkedRoot, 'HEAD');
+  const commonDir = runGit(linkedRoot, 'rev-parse', '--git-common-dir');
+  const commonPath = path.resolve(linkedRoot, commonDir);
+  writeFileSync(path.join(commonPath, 'info', 'grafts'), `${runGit(linkedRoot, 'rev-parse', 'HEAD')}\n`);
+
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: linkedRoot }),
+    /refuses nonempty Git grafts/,
+  );
+});
+
+test('prepare mode writes a patch without modifying the target checkout', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  const before = runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all');
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-prepare-only-'));
+  registerCleanup(context, outputRoot);
+  const output = path.join(outputRoot, 'sync.patch');
+
+  const result = syncAwesomeCopilotCore({
+    logger: QUIET,
+    output,
+    sourceRoot,
+    targetRoot: fixture.targetRoot,
+    write: true,
+  });
+
+  assert.ok(result.actions.length > 0);
+  assert.equal(result.aligned, false);
+  assert.equal(existsSync(output), true);
+  assert.equal(runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all'), before);
+  assert.equal(readFileSync(path.join(fixture.targetSkillRoot, 'SKILL.md'), 'utf8'), 'outdated\r\n');
+});
+
+test('prepare mode rejects patch output inside source or target repository', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  for (const output of [
+    path.join(sourceRoot, 'inside.patch'),
+    path.join(fixture.targetRoot, 'inside.patch'),
+  ]) {
+    assert.throws(
+      () => syncAwesomeCopilotCore({
+        logger: QUIET,
+        output,
+        sourceRoot,
+        targetRoot: fixture.targetRoot,
+        write: true,
+      }),
+      /must be outside both canonical source and Awesome target repositories/,
+    );
+    assert.equal(existsSync(output), false);
+  }
+});
+
+test('prepare mode rejects missing or linked patch output directories', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const externalRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-output-parent-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, externalRoot);
+
+  const missingOutput = path.join(externalRoot, 'missing', 'sync.patch');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: missingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /Patch output directory does not exist/,
+  );
+  assert.equal(existsSync(missingOutput), false);
+
+  const linkedDirectory = path.join(externalRoot, 'linked-output');
+  try {
+    createDirectoryLink(fixture.targetRoot, linkedDirectory);
+  } catch (error) {
+    context.skip(`Directory links are unavailable: ${error.message}`);
+    return;
+  }
+  const escapedOutput = path.join(linkedDirectory, 'escaped.patch');
+  const targetBefore = runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: escapedOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /symbolic link, junction, or reparse point/,
+  );
+  assert.equal(existsSync(path.join(fixture.targetRoot, 'escaped.patch')), false);
+  assert.equal(runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all'), targetBefore);
+});
+
+test('aligned prepare still validates the requested patch output', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-aligned-output-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, outputRoot);
+
+  syncAwesomeCopilot({
+    logger: QUIET,
+    sourceRoot,
+    targetRoot: fixture.targetRoot,
+    write: true,
+  });
+  commitAll(fixture.targetRoot, 'align target');
+  setUpstreamMain(fixture.targetRoot);
+
+  const missingOutput = path.join(outputRoot, 'missing', 'sync.patch');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: missingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /Patch output directory does not exist/,
+  );
+
+  const existingOutput = path.join(outputRoot, 'existing.patch');
+  writeFileSync(existingOutput, 'stale\n');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: existingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /must not already exist/,
+  );
+  assert.equal(readFileSync(existingOutput, 'utf8'), 'stale\n');
+});
+
+test('prepare aborts when target HEAD moves after planning', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-moving-target-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, outputRoot);
+  const output = path.join(outputRoot, 'sync.patch');
+
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      beforePatchClone: () => {
+        const targetPlugin = JSON.parse(readFileSync(fixture.pluginPath, 'utf8'));
+        targetPlugin.repository = 'https://example.invalid/moved-target';
+        writeJson(fixture.pluginPath, targetPlugin);
+        commitAll(fixture.targetRoot, 'change target-owned metadata during prepare');
+      },
+      logger: QUIET,
+      output,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /target HEAD changed during preparation/,
+  );
+  assert.equal(existsSync(output), false);
+});
+
+test('global process-capable Git filters are ignored during checks', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  const configRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-filter-config-'));
+  registerCleanup(context, configRoot);
+  const sentinel = path.join(configRoot, 'filter-ran.txt');
+  const configPath = path.join(configRoot, 'gitconfig');
+  const filterCommand = process.platform === 'win32'
+    ? `cmd /d /c echo ran>${sentinel.replace(/\\/g, '/')}`
+    : `sh -c 'echo ran > ${sentinel}'`;
+  writeFileSync(configPath, `[filter "danger"]\n\tclean = ${filterCommand}\n\tsmudge = ${filterCommand}\n`);
+  writeFileSync(path.join(fixture.targetRoot, '.gitattributes'), '* filter=danger\n');
+  commitAll(fixture.targetRoot, 'configure dangerous filter');
+  setUpstreamMain(fixture.targetRoot);
+
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = configPath;
+  try {
+    syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot });
+  } finally {
+    if (previousGlobal === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL;
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = previousGlobal;
+    }
+  }
+  assert.equal(existsSync(sentinel), false);
+});
+
+test('repository-local process-capable Git filters are rejected before inspection', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  runGit(fixture.targetRoot, 'config', 'filter.danger.clean', 'echo dangerous');
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot }),
+    /refuses repository-local or included process-capable Git filters/,
+  );
+});
+
+test('included local process filters are rejected before they execute', (context) => {
+  for (const side of ['source', 'target']) {
+    const sourceRoot = createSourceFixture();
+    const fixture = createTargetFixture();
+    const configRoot = mkdtempSync(path.join(tmpdir(), `ai-team-included-filter-${side}-`));
+    registerCleanup(context, sourceRoot);
+    registerCleanup(context, fixture.targetRoot);
+    registerCleanup(context, configRoot);
+
+    const sentinel = path.join(configRoot, 'filter-ran.txt');
+    const includedConfig = path.join(configRoot, 'included.gitconfig');
+    const filterCommand = process.platform === 'win32'
+      ? `cmd /d /c echo ran>${sentinel.replace(/\\/g, '/')}`
+      : `sh -c 'echo ran > ${sentinel}'`;
+    writeFileSync(
+      includedConfig,
+      `[filter "danger"]\n\tclean = ${filterCommand}\n\tsmudge = ${filterCommand}\n`,
+    );
+    const repositoryRoot = side === 'source' ? sourceRoot : fixture.targetRoot;
+    writeFileSync(path.join(repositoryRoot, '.gitattributes'), '* filter=danger\n');
+    commitAll(repositoryRoot, 'configure included filter attributes');
+    if (side === 'target') {
+      setUpstreamMain(repositoryRoot);
+    }
+    runGit(repositoryRoot, 'config', '--local', 'include.path', includedConfig.replace(/\\/g, '/'));
+
+    assert.throws(
+      () => syncAwesomeCopilot({
+        logger: QUIET,
+        sourceRoot,
+        targetRoot: fixture.targetRoot,
+      }),
+      /refuses repository-local or included process-capable Git filters/,
+    );
+    assert.equal(existsSync(sentinel), false);
+  }
 });
 
 test('manifest rejects duplicate and traversal-like agents, skills, and plugin targets', (context) => {
@@ -367,6 +727,36 @@ test('manifest rejects duplicate and traversal-like agents, skills, and plugin t
     { mutate: (value) => { value.skill.target = '..'; }, pattern: /skill\.target must match/ },
     { mutate: (value) => { value.plugin.target = 'escape\/plugin'; }, pattern: /plugin\.target must match/ },
     { mutate: (value) => { value.plugin.target = 'C:\\escape'; }, pattern: /plugin\.target must match/ },
+  ];
+  for (const fixtureCase of cases) {
+    const sourceRoot = createSourceFixture();
+    const target = createTargetFixture();
+    registerCleanup(context, sourceRoot);
+    registerCleanup(context, target.targetRoot);
+    const manifest = readManifest(sourceRoot);
+    fixtureCase.mutate(manifest);
+    writeManifest(sourceRoot, manifest);
+    assert.throws(
+      () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: target.targetRoot }),
+      fixtureCase.pattern,
+    );
+  }
+});
+
+test('exporter rejects safe but noncanonical synchronization ownership', (context) => {
+  const cases = [
+    {
+      mutate: (value) => { value.skill.target = 'alternate-skill'; },
+      pattern: /target skill must be "ai-team-orchestration"/,
+    },
+    {
+      mutate: (value) => { value.plugin.target = 'alternate-plugin'; },
+      pattern: /target plugin must be "ai-team-orchestration"/,
+    },
+    {
+      mutate: (value) => { value.plugin.managedFields.push('repository'); },
+      pattern: /managed plugin fields must be exactly/,
+    },
   ];
   for (const fixtureCase of cases) {
     const sourceRoot = createSourceFixture();

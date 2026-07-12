@@ -6,7 +6,7 @@
     "validate": "node eng/validate.mjs",
     "test": "node --test",
     "awesome:check": "node eng/sync-awesome-copilot.mjs",
-    "awesome:write": "node eng/sync-awesome-copilot.mjs --write"
+    "awesome:prepare": "node eng/sync-awesome-copilot.mjs --write"
   },
   "engines": {
     "node": ">=20"

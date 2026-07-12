@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
 import {
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,6 +12,20 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
+
+import {
+  assertManagedDirectory,
+  assertManagedRegularFile,
+  assertSafeManagedPath,
+  createRootInfo,
+  isContainedPath,
+  sameFilesystemPath,
+  tryLstat,
+  validatePortableRelativePath,
+} from './path-safety.mjs';
+import {
+  assertCanonicalSyncManifest,
+} from './sync-manifest-contract.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_SOURCE_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -155,142 +168,6 @@ function targetRelativePath(...parts) {
   return path.posix.join(...parts);
 }
 
-function tryLstat(filePath) {
-  try {
-    return lstatSync(filePath);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function sameFilesystemPath(left, right) {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function isContainedPath(rootPath, candidatePath, allowRoot = true) {
-  const relativePath = path.relative(rootPath, candidatePath);
-  if (relativePath === '') {
-    return allowRoot;
-  }
-  return relativePath !== '..'
-    && !relativePath.startsWith(`..${path.sep}`)
-    && !path.isAbsolute(relativePath);
-}
-
-function validatePortableRelativePath(portablePath, label) {
-  if (typeof portablePath !== 'string' || portablePath.length === 0) {
-    throw new Error(`${label} must be a non-empty relative path.`);
-  }
-  if (portablePath.includes('\\')
-    || portablePath.includes('\0')
-    || path.posix.isAbsolute(portablePath)
-    || path.win32.isAbsolute(portablePath)) {
-    throw new Error(`${label} must be a portable relative path without drive or separator escapes: ${portablePath}`);
-  }
-
-  const parts = portablePath.split('/');
-  if (parts.some((part) => part === ''
-    || part === '.'
-    || part === '..'
-    || /^[A-Za-z]:/.test(part))) {
-    throw new Error(`${label} contains an empty, dot, or drive-form path segment: ${portablePath}`);
-  }
-  return parts;
-}
-
-function createRootInfo(rootPath, label) {
-  const resolvedPath = path.resolve(rootPath);
-  const rootStat = tryLstat(resolvedPath);
-  if (!rootStat) {
-    throw new Error(`${label} does not exist: ${resolvedPath}`);
-  }
-  if (rootStat.isSymbolicLink()) {
-    throw new Error(`${label} must not be a symbolic link, junction, or reparse point: ${resolvedPath}`);
-  }
-  if (!rootStat.isDirectory()) {
-    throw new Error(`${label} must be a directory: ${resolvedPath}`);
-  }
-  const realPath = realpathSync(resolvedPath);
-  if (!sameFilesystemPath(realPath, resolvedPath)) {
-    throw new Error(`${label} must not resolve through a symbolic link, junction, mount, or reparse point: ${resolvedPath}`);
-  }
-
-  return {
-    label,
-    path: resolvedPath,
-    realPath,
-  };
-}
-
-function resolveManagedPath(rootInfo, portablePath, label = portablePath) {
-  const parts = validatePortableRelativePath(portablePath, label);
-  const resolvedPath = path.resolve(rootInfo.path, ...parts);
-  if (!isContainedPath(rootInfo.path, resolvedPath, false)) {
-    throw new Error(`${label} resolves outside ${rootInfo.label}: ${portablePath}`);
-  }
-  return resolvedPath;
-}
-
-function assertSafeManagedPath(rootInfo, portablePath, label = portablePath) {
-  const parts = validatePortableRelativePath(portablePath, label);
-  const resolvedPath = resolveManagedPath(rootInfo, portablePath, label);
-  const rootStat = tryLstat(rootInfo.path);
-  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new Error(`${rootInfo.label} changed into a missing or linked path.`);
-  }
-  const currentRootRealPath = realpathSync(rootInfo.path);
-  if (!sameFilesystemPath(currentRootRealPath, rootInfo.realPath)) {
-    throw new Error(`${rootInfo.label} changed its real path during synchronization.`);
-  }
-  let currentPath = rootInfo.path;
-
-  for (let index = 0; index < parts.length; index += 1) {
-    currentPath = path.join(currentPath, parts[index]);
-    const currentStat = tryLstat(currentPath);
-    if (!currentStat) {
-      break;
-    }
-    if (currentStat.isSymbolicLink()) {
-      throw new Error(`${label} contains a symbolic link, junction, or reparse point: ${currentPath}`);
-    }
-
-    const currentRealPath = realpathSync(currentPath);
-    if (!isContainedPath(rootInfo.realPath, currentRealPath, true)) {
-      throw new Error(`${label} escapes ${rootInfo.label} through a reparse point: ${currentPath}`);
-    }
-    if (index < parts.length - 1 && !currentStat.isDirectory()) {
-      throw new Error(`${label} has a non-directory path component: ${currentPath}`);
-    }
-  }
-
-  return resolvedPath;
-}
-
-function assertManagedDirectory(rootInfo, portablePath, label = portablePath) {
-  const absolutePath = assertSafeManagedPath(rootInfo, portablePath, label);
-  const targetStat = tryLstat(absolutePath);
-  if (!targetStat || !targetStat.isDirectory()) {
-    throw new Error(`${label} must be an existing directory.`);
-  }
-  return absolutePath;
-}
-
-function assertManagedRegularFile(rootInfo, portablePath, label = portablePath) {
-  const absolutePath = assertSafeManagedPath(rootInfo, portablePath, label);
-  const targetStat = tryLstat(absolutePath);
-  if (!targetStat || !targetStat.isFile()) {
-    throw new Error(`${label} must be an existing regular file.`);
-  }
-  return absolutePath;
-}
-
 function listFilesStrict(rootInfo, portableRoot, blockers = []) {
   let rootPath;
   try {
@@ -372,6 +249,8 @@ export function sanitizedGitEnvironment() {
   }
   environment.GIT_OPTIONAL_LOCKS = '0';
   environment.GIT_NO_REPLACE_OBJECTS = '1';
+  environment.GIT_CONFIG_NOSYSTEM = '1';
+  environment.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';
   return environment;
 }
 
@@ -448,7 +327,7 @@ function parseLsTree(buffer, label) {
   return entries;
 }
 
-function readHeadBlob(source, entry, label) {
+function readCommitBlob(rootInfo, entry, label, revisionLabel) {
   if (entry.mode === '120000') {
     throw new Error(`${label} is a tracked symbolic link; canonical managed sources must be regular files.`);
   }
@@ -456,19 +335,19 @@ function readHeadBlob(source, entry, label) {
     throw new Error(`${label} is not a tracked regular file (mode ${entry.mode}, type ${entry.type}).`);
   }
   return requireGitSuccess(
-    source.root.path,
+    rootInfo.path,
     ['cat-file', 'blob', entry.objectId],
-    `Unable to read ${label} from source HEAD`,
+    `Unable to read ${label} from ${revisionLabel}`,
     { binary: true },
   );
 }
 
-function getHeadEntry(source, portablePath, label) {
-  assertSafeManagedPath(source.root, portablePath, label);
+function getCommitEntry(rootInfo, commit, portablePath, label, revisionLabel) {
+  assertSafeManagedPath(rootInfo, portablePath, label);
   const output = requireGitSuccess(
-    source.root.path,
-    ['ls-tree', '-z', source.head, '--', `:(literal)${portablePath}`],
-    `Unable to inspect ${label} in source HEAD`,
+    rootInfo.path,
+    ['ls-tree', '-z', commit, '--', `:(literal)${portablePath}`],
+    `Unable to inspect ${label} in ${revisionLabel}`,
     { binary: true },
   );
   const entries = parseLsTree(output, label)
@@ -480,7 +359,25 @@ function getHeadEntry(source, portablePath, label) {
 }
 
 function readHeadFile(source, portablePath, label = portablePath) {
-  return readHeadBlob(source, getHeadEntry(source, portablePath, label), label);
+  const entry = getCommitEntry(
+    source.root,
+    source.head,
+    portablePath,
+    label,
+    'source HEAD',
+  );
+  return readCommitBlob(source.root, entry, label, 'source HEAD');
+}
+
+function readTargetCommitFile(targetRoot, targetHead, portablePath, label = portablePath) {
+  const entry = getCommitEntry(
+    targetRoot,
+    targetHead,
+    portablePath,
+    label,
+    'pinned target HEAD',
+  );
+  return readCommitBlob(targetRoot, entry, label, 'pinned target HEAD');
 }
 
 function listHeadSkillFiles(source, sourceSkill) {
@@ -520,7 +417,12 @@ function listHeadSkillFiles(source, sourceSkill) {
     validatePortableRelativePath(relativePath, `Tracked skill path ${entry.path}`);
     assertSafeManagedPath(source.root, entry.path, `Tracked skill path ${entry.path}`);
     return {
-      bytes: readHeadBlob(source, entry, `Tracked skill file ${entry.path}`),
+      bytes: readCommitBlob(
+        source.root,
+        entry,
+        `Tracked skill file ${entry.path}`,
+        'source HEAD',
+      ),
       relativePath,
     };
   });
@@ -568,23 +470,72 @@ function getAttachedFeatureBranch(rootInfo, label) {
 }
 
 function assertTargetBasedOnUpstreamMain(rootInfo) {
+  const upstreamRef = 'refs/remotes/upstream/main';
+  const graftsGitPath = requireGitSuccess(
+    rootInfo.path,
+    ['rev-parse', '--git-path', 'info/grafts'],
+    'Unable to locate Git grafts path',
+  ).trim();
+  const graftsPath = path.resolve(rootInfo.path, graftsGitPath);
+  const graftsStat = tryLstat(graftsPath);
+  if (graftsStat) {
+    if (!graftsStat.isFile() || graftsStat.isSymbolicLink() || graftsStat.nlink !== 1) {
+      throw new Error('Awesome Copilot target refuses linked or non-regular Git graft files.');
+    }
+    if (graftsStat.size !== 0) {
+      throw new Error('Awesome Copilot target refuses nonempty Git grafts.');
+    }
+  }
   const upstreamResult = runGit(
     rootInfo.path,
-    ['rev-parse', '--verify', '--quiet', 'upstream/main^{commit}'],
+    ['show-ref', '--verify', '--quiet', upstreamRef],
   );
   if (upstreamResult.status !== 0) {
-    throw new Error('Awesome Copilot target requires the fetched ref upstream/main.');
+    throw new Error(`Awesome Copilot target requires the fetched ref ${upstreamRef}.`);
+  }
+  const symbolicResult = runGit(rootInfo.path, ['symbolic-ref', '--quiet', upstreamRef]);
+  if (symbolicResult.status === 0) {
+    throw new Error(`${upstreamRef} must be a direct remote-tracking ref, not a symbolic ref.`);
+  }
+  if (symbolicResult.status !== 1) {
+    throw new Error(`Unable to verify ${upstreamRef} ref type: ${gitErrorText(symbolicResult)}`);
+  }
+  const upstreamUrl = requireGitSuccess(
+    rootInfo.path,
+    ['remote', 'get-url', '--all', 'upstream'],
+    'Unable to inspect Awesome Copilot upstream remote',
+  ).trim().split(/\r?\n/).filter(Boolean);
+  if (upstreamUrl.length !== 1
+    || !/^(?:https:\/\/github\.com\/github\/awesome-copilot(?:\.git)?|git@github\.com:github\/awesome-copilot(?:\.git)?)$/i.test(upstreamUrl[0])) {
+    throw new Error('Awesome Copilot target upstream remote must resolve exactly to github/awesome-copilot.');
   }
 
   const ancestorResult = runGit(
     rootInfo.path,
-    ['merge-base', '--is-ancestor', 'upstream/main', 'HEAD'],
+    ['merge-base', '--is-ancestor', `${upstreamRef}^{commit}`, 'HEAD'],
   );
   if (ancestorResult.status === 1) {
-    throw new Error('Awesome Copilot target HEAD must be based on upstream/main.');
+    throw new Error(`Awesome Copilot target HEAD must be based on ${upstreamRef}.`);
   }
   if (ancestorResult.status !== 0) {
-    throw new Error(`Unable to verify upstream/main ancestry: ${gitErrorText(ancestorResult)}`);
+    throw new Error(`Unable to verify ${upstreamRef} ancestry: ${gitErrorText(ancestorResult)}`);
+  }
+}
+
+function assertNoProcessFilters(rootInfo, label) {
+  const result = runGit(rootInfo.path, [
+    'config',
+    '--local',
+    '--includes',
+    '--show-origin',
+    '--get-regexp',
+    String.raw`^filter\..*\.(clean|smudge|process)$`,
+  ]);
+  if (result.status === 0) {
+    throw new Error(`${label} refuses repository-local or included process-capable Git filters.`);
+  }
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`Unable to inspect ${label} Git filters: ${gitErrorText(result)}`);
   }
 }
 
@@ -608,17 +559,22 @@ function assertCleanWorktree(rootInfo, label) {
   }
 }
 
+function resolveHeadCommit(rootInfo, label) {
+  return requireGitSuccess(
+    rootInfo.path,
+    ['rev-parse', '--verify', 'HEAD^{commit}'],
+    `Unable to resolve ${label} HEAD`,
+  ).trim();
+}
+
 function loadSource(sourceRoot) {
   const root = createRootInfo(sourceRoot, 'Canonical source root');
   assertGitRoot(root, 'Canonical source');
+  assertNoProcessFilters(root, 'Canonical source');
   const branch = getAttachedFeatureBranch(root, 'Canonical source');
   assertNoStagedChanges(root, 'Canonical source');
   assertCleanWorktree(root, 'Canonical source');
-  const head = requireGitSuccess(
-    root.path,
-    ['rev-parse', '--verify', 'HEAD'],
-    'Unable to resolve canonical source HEAD',
-  ).trim();
+  const head = resolveHeadCommit(root, 'canonical source');
   const source = { branch, head, root };
   const configBytes = readHeadFile(
     source,
@@ -680,11 +636,13 @@ function validateConfig(config) {
     }
     managedFields.add(field);
   }
+  assertCanonicalSyncManifest(config);
 }
 
 function verifyTarget(targetRoot) {
   const root = createRootInfo(targetRoot, 'Awesome Copilot target root');
   assertGitRoot(root, 'Awesome Copilot target');
+  assertNoProcessFilters(root, 'Awesome Copilot target');
 
   const packagePath = assertManagedRegularFile(root, 'package.json', 'Target package.json');
   const targetPackage = parseJson(packagePath, 'Target package.json');
@@ -699,8 +657,8 @@ function verifyTarget(targetRoot) {
 }
 
 function assertWriteSafe(targetRoot) {
-  assertNoStagedChanges(targetRoot, 'Write mode target');
-  assertCleanWorktree(targetRoot, 'Write mode target');
+  assertNoStagedChanges(targetRoot, 'Prepare mode target');
+  assertCleanWorktree(targetRoot, 'Prepare mode target');
 }
 
 function listGitPaths(buffer, label) {
@@ -772,14 +730,14 @@ function listWorktreeChanges(rootInfo, relativePaths = null) {
   return changes;
 }
 
-function listTrackedTargetFiles(targetRoot) {
+function listTrackedTargetFiles(targetRoot, targetHead) {
   const output = requireGitSuccess(
     targetRoot.path,
-    ['ls-files', '-z'],
-    'Unable to enumerate tracked target files',
+    ['ls-tree', '-r', '-z', targetHead],
+    'Unable to enumerate files in pinned target HEAD',
     { binary: true },
   );
-  return new Set(listGitPaths(output, 'Tracked target path'));
+  return new Set(parseLsTree(output, 'Pinned target tree').map((entry) => entry.path));
 }
 
 function isTargetPathIgnored(targetRoot, relativePath) {
@@ -808,7 +766,7 @@ function addDesiredFile(plan, relativePath, bytes) {
   plan.desired.push({ bytes, relativePath });
 }
 
-function buildPlan(source, targetRoot, config) {
+function buildPlan(source, targetRoot, targetHead, targetBranch, config) {
   const plan = {
     blockers: [],
     desired: [],
@@ -817,8 +775,11 @@ function buildPlan(source, targetRoot, config) {
     pluginVersion: '',
     targetSkillRoot: targetRelativePath('skills', config.skill.target),
     sourceHead: source.head,
+    sourceRoot: source.root,
+    targetBranch,
+    targetHead,
     targetRoot,
-    trackedTargetFiles: listTrackedTargetFiles(targetRoot),
+    trackedTargetFiles: listTrackedTargetFiles(targetRoot, targetHead),
   };
 
   for (const agentId of config.agents) {
@@ -889,7 +850,15 @@ function buildPlan(source, targetRoot, config) {
     plan.blockers.push(`Target plugin manifest is not a regular file: ${targetPluginRelative}`);
     addDesiredFile(plan, targetPluginRelative, null);
   } else {
-    const targetPlugin = parseJson(targetPluginPath, 'Target plugin manifest');
+    const targetPlugin = parseJsonBuffer(
+      readTargetCommitFile(
+        targetRoot,
+        targetHead,
+        targetPluginRelative,
+        'Target plugin manifest',
+      ),
+      'Target plugin manifest',
+    );
     if (!targetPlugin || typeof targetPlugin !== 'object' || Array.isArray(targetPlugin)) {
       throw new Error('Target plugin manifest must contain a JSON object.');
     }
@@ -917,7 +886,7 @@ function unmanagedTargetBlocker(plan, relativePath) {
   return `Refusing unmanaged ${ignored ? 'ignored' : 'untracked'} target path: ${relativePath}`;
 }
 
-function inspectPlan(plan, allowedCreatedPaths = new Set()) {
+function inspectPlan(plan) {
   const blockers = [...plan.blockers];
   const drift = [];
 
@@ -963,7 +932,6 @@ function inspectPlan(plan, allowedCreatedPaths = new Set()) {
     const matchesDesiredBytes = file.bytes !== null
       && readFileSync(absolutePath).equals(file.bytes);
     const isTracked = plan.trackedTargetFiles.has(file.relativePath)
-      || allowedCreatedPaths.has(file.relativePath)
       || (!isTargetPathIgnored(plan.targetRoot, file.relativePath) && matchesDesiredBytes);
     if (!isTracked) {
       blockers.push(unmanagedTargetBlocker(plan, file.relativePath));
@@ -1060,15 +1028,10 @@ function createPatchClone(plan, actions) {
       path.join(cloneInfo.path, '.git', 'info', 'attributes'),
       '* -text -filter -diff -ident -working-tree-encoding\n',
     );
-    const targetHead = requireGitSuccess(
-      plan.targetRoot.path,
-      ['rev-parse', '--verify', 'HEAD'],
-      'Unable to resolve target HEAD',
-    ).trim();
     requireGitSuccess(
       cloneInfo.path,
-      ['checkout', '--detach', '--force', targetHead],
-      'Unable to check out target HEAD in private clone',
+      ['checkout', '--detach', '--force', plan.targetHead],
+      'Unable to check out pinned target HEAD in private clone',
     );
 
     const desiredByPath = new Map(plan.desired.map((file) => [file.relativePath, file]));
@@ -1171,6 +1134,9 @@ function createPatchClone(plan, actions) {
 }
 
 function applyGitPatch(targetRoot, patch, checkOnly) {
+  if (targetRoot.label !== 'Private patch clone') {
+    throw new Error('Binary patches may be applied only inside the private verification clone.');
+  }
   const argumentsList = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply'];
   if (checkOnly) {
     argumentsList.push('--check');
@@ -1183,58 +1149,110 @@ function applyGitPatch(targetRoot, patch, checkOnly) {
   }
 }
 
-function applyPlan(plan, inspection, logger) {
+function resolvePatchOutput(plan, outputPath) {
+  const resolvedOutput = path.resolve(outputPath);
+  const outputDirectory = createRootInfo(
+    path.dirname(resolvedOutput),
+    'Patch output directory',
+  );
+  const safeOutput = path.join(outputDirectory.realPath, path.basename(resolvedOutput));
+  if (isContainedPath(plan.sourceRoot.realPath, safeOutput, true)
+    || isContainedPath(plan.targetRoot.realPath, safeOutput, true)) {
+    throw new Error('Patch output must be outside both canonical source and Awesome target repositories.');
+  }
+  if (tryLstat(safeOutput)) {
+    throw new Error(`Patch output must not already exist: ${safeOutput}`);
+  }
+  return { outputDirectory, safeOutput };
+}
+
+function assertStableTargetSnapshot(plan) {
+  assertWriteSafe(plan.targetRoot);
+  const branch = getAttachedFeatureBranch(plan.targetRoot, 'Prepare mode target');
+  if (branch !== plan.targetBranch) {
+    throw new Error(`Prepare mode target branch changed from ${plan.targetBranch} to ${branch}.`);
+  }
+  assertTargetBasedOnUpstreamMain(plan.targetRoot);
+  const targetHead = resolveHeadCommit(plan.targetRoot, 'Awesome Copilot target');
+  if (targetHead !== plan.targetHead) {
+    throw new Error(`Awesome Copilot target HEAD changed during preparation: expected ${plan.targetHead}, found ${targetHead}.`);
+  }
+}
+
+function preparePatch(
+  plan,
+  inspection,
+  outputPath,
+  logger,
+  patchConsumer,
+  beforePatchClone,
+) {
   if (inspection.blockers.length > 0) {
     throw new Error(inspection.blockers.join('\n'));
   }
 
+  const output = resolvePatchOutput(plan, outputPath);
   const actions = plannedActions(inspection);
   if (actions.length === 0) {
+    assertStableTargetSnapshot(plan);
     logger('Awesome Copilot checkout is already aligned.');
-    return actions;
+    return { actions, patchPath: null };
   }
 
   let patchWorkspace;
   try {
+    if (beforePatchClone) {
+      beforePatchClone();
+    }
     patchWorkspace = createPatchClone(plan, actions);
-    applyGitPatch(plan.targetRoot, patchWorkspace.patch, true);
-    applyGitPatch(plan.targetRoot, patchWorkspace.patch, false);
+    assertStableTargetSnapshot(plan);
+
+    const recheckedOutputDirectory = createRootInfo(
+      output.outputDirectory.path,
+      'Patch output directory',
+    );
+    if (!sameFilesystemPath(recheckedOutputDirectory.realPath, output.outputDirectory.realPath)) {
+      throw new Error('Patch output directory changed during preparation.');
+    }
+    if (tryLstat(output.safeOutput)) {
+      throw new Error(`Patch output must not already exist: ${output.safeOutput}`);
+    }
+
+    assertStableTargetSnapshot(plan);
+    writeFileSync(output.safeOutput, patchWorkspace.patch, { flag: 'wx' });
+    logger(`Prepared verified binary patch: ${output.safeOutput}`);
+    if (patchConsumer) {
+      patchConsumer({
+        actions,
+        patch: patchWorkspace.patch,
+        patchPath: output.safeOutput,
+        targetRoot: plan.targetRoot,
+      });
+    }
+    for (const action of actions) {
+      logger(`${action.kind.toUpperCase()} ${action.relativePath}`);
+    }
+    logger('The target checkout was not modified. Recheck it, then apply the patch explicitly with your trusted Git client.');
+    return { actions, patchPath: output.safeOutput };
   } finally {
     if (patchWorkspace) {
       rmSync(patchWorkspace.temporaryRoot, { force: true, recursive: true });
     }
   }
-
-  plan.trackedTargetFiles = listTrackedTargetFiles(plan.targetRoot);
-  const remaining = inspectPlan(plan, new Set(
-    actions.filter((action) => action.kind === 'create').map((action) => action.relativePath),
-  ));
-  if (remaining.blockers.length > 0 || remaining.drift.length > 0) {
-    const details = [
-      ...remaining.blockers.map((blocker) => `BLOCKER ${blocker}`),
-      ...remaining.drift.map((item) => `${item.kind.toUpperCase()} ${item.relativePath}`),
-    ].join('\n');
-    throw new Error(`Synchronization did not converge:\n${details}`);
-  }
-
-  const expectedChanges = expectedPatchChanges(actions);
-  const targetChanges = listWorktreeChanges(plan.targetRoot);
-  assertExpectedChanges(targetChanges, expectedChanges, 'Applied target diff');
-  for (const action of actions) {
-    logger(`${action.kind.toUpperCase()} ${action.relativePath}`);
-  }
-  logger(`Applied ${actions.length} managed synchronization action${actions.length === 1 ? '' : 's'}.`);
-  return actions;
 }
 
 function logProvenance(plan, logger) {
   logger(`Source HEAD: ${plan.sourceHead}`);
+  logger(`Target HEAD: ${plan.targetHead}`);
   logger(`Plugin version: ${plan.pluginVersion}`);
 }
 
 export function syncAwesomeCopilot({
   targetRoot,
   write = false,
+  output,
+  patchConsumer,
+  beforePatchClone,
   sourceRoot = DEFAULT_SOURCE_ROOT,
   logger = console.log,
 }) {
@@ -1245,10 +1263,20 @@ export function syncAwesomeCopilot({
   const source = loadSource(sourceRoot);
   validateConfig(source.config);
   const verifiedTargetRoot = verifyTarget(targetRoot);
-  getAttachedFeatureBranch(verifiedTargetRoot, write ? 'Write mode target' : 'Check mode target');
+  const targetBranch = getAttachedFeatureBranch(
+    verifiedTargetRoot,
+    write ? 'Prepare mode target' : 'Check mode target',
+  );
   assertTargetBasedOnUpstreamMain(verifiedTargetRoot);
+  const targetHead = resolveHeadCommit(verifiedTargetRoot, 'Awesome Copilot target');
 
-  const plan = buildPlan(source, verifiedTargetRoot, source.config);
+  const plan = buildPlan(
+    source,
+    verifiedTargetRoot,
+    targetHead,
+    targetBranch,
+    source.config,
+  );
   const inspection = inspectPlan(plan);
 
   if (!write) {
@@ -1272,31 +1300,43 @@ export function syncAwesomeCopilot({
       drift: inspection.drift,
       pluginVersion: plan.pluginVersion,
       sourceHead: plan.sourceHead,
+      targetHead: plan.targetHead,
     };
+  }
+
+  if (!output || output.trim() === '') {
+    throw new Error('Prepare mode requires --output <patch-file>.');
   }
 
   if (inspection.blockers.length > 0) {
     throw new Error(inspection.blockers.join('\n'));
   }
-  assertWriteSafe(verifiedTargetRoot);
-  getAttachedFeatureBranch(verifiedTargetRoot, 'Write mode target');
-  assertTargetBasedOnUpstreamMain(verifiedTargetRoot);
+  assertStableTargetSnapshot(plan);
   const finalInspection = inspectPlan(plan);
-  const actions = applyPlan(plan, finalInspection, logger);
+  const prepared = preparePatch(
+    plan,
+    finalInspection,
+    output,
+    logger,
+    patchConsumer,
+    beforePatchClone,
+  );
   logProvenance(plan, logger);
   return {
-    actions,
-    aligned: true,
+    actions: prepared.actions,
+    aligned: prepared.actions.length === 0,
     blockers: [],
     drift: [],
+    patchPath: prepared.patchPath,
     pluginVersion: plan.pluginVersion,
     sourceHead: plan.sourceHead,
+    targetHead: plan.targetHead,
   };
 }
 
 function usage() {
   return [
-    'Usage: node eng/sync-awesome-copilot.mjs --target <checkout> [--write]',
+    'Usage: node eng/sync-awesome-copilot.mjs --target <checkout> [--write --output <patch-file>]',
     '',
     'Without --write, the command checks for managed drift.',
     'AWESOME_COPILOT_ROOT may be used instead of --target.',
@@ -1306,12 +1346,21 @@ function usage() {
 function parseArguments(argumentsList, environment) {
   let targetRoot = environment.AWESOME_COPILOT_ROOT;
   let write = false;
+  let output;
   let help = false;
 
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (argument === '--write') {
       write = true;
+    } else if (argument === '--output') {
+      index += 1;
+      if (index >= argumentsList.length || argumentsList[index].startsWith('--')) {
+        throw new Error('--output requires a patch file path.');
+      }
+      output = argumentsList[index];
+    } else if (argument.startsWith('--output=')) {
+      output = argument.slice('--output='.length);
     } else if (argument === '--help' || argument === '-h') {
       help = true;
     } else if (argument === '--target') {
@@ -1331,7 +1380,7 @@ function parseArguments(argumentsList, environment) {
     throw new Error('Missing --target <checkout>; alternatively set AWESOME_COPILOT_ROOT.');
   }
 
-  return { help, targetRoot, write };
+  return { help, output, targetRoot, write };
 }
 
 function isDirectExecution() {
