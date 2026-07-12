@@ -882,7 +882,7 @@ function unmanagedTargetBlocker(plan, relativePath) {
   return `Refusing unmanaged ${ignored ? 'ignored' : 'untracked'} target path: ${relativePath}`;
 }
 
-function inspectPlan(plan, allowedCreatedPaths = new Set()) {
+function inspectPlan(plan) {
   const blockers = [...plan.blockers];
   const drift = [];
 
@@ -928,7 +928,6 @@ function inspectPlan(plan, allowedCreatedPaths = new Set()) {
     const matchesDesiredBytes = file.bytes !== null
       && readFileSync(absolutePath).equals(file.bytes);
     const isTracked = plan.trackedTargetFiles.has(file.relativePath)
-      || allowedCreatedPaths.has(file.relativePath)
       || (!isTargetPathIgnored(plan.targetRoot, file.relativePath) && matchesDesiredBytes);
     if (!isTracked) {
       blockers.push(unmanagedTargetBlocker(plan, file.relativePath));

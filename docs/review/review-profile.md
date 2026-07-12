@@ -33,7 +33,7 @@ Publish a trustworthy VS Code agent plugin that coordinates Producer, Dev, and o
 ## Scale context
 
 - Small repository: three agent files, one skill with six reference files, Node validators/exporter, and no dependency tree.
-- Current review scope: 24 changed files, about 3.2k additions, and 0.6k deletions relative to `origin/main`.
+- Current review scope: 25 changed files, about 3.6k additions, and 0.7k deletions relative to `origin/main`.
 - Optimize first for correctness, unambiguous state transitions, public usability, and safe tool execution. Micro-optimizing linear file scans is not valuable at this scale.
 
 ## Privacy / EUII surface

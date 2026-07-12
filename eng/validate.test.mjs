@@ -898,6 +898,41 @@ test('validator rejects unexpected executable fences and command-like prose in S
   }
 });
 
+test('validator rejects Safe Git command fences hidden in comments or raw HTML', (context) => {
+  for (const [name, wrapper] of [
+    ['HTML comment', (fence) => `<!--\n${fence}\n-->`],
+    ['template block', (fence) => `<template>\n${fence}\n</template>`],
+    ['raw HTML block', (fence) => `<div>\n${fence}\n</div>\n`],
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const safeGitPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'safe-git-values.md');
+    const contents = readFileSync(safeGitPath, 'utf8');
+    const fencePattern = /```text\r?\n[\s\S]*?```/g;
+    const hidden = contents.replace(fencePattern, (fence) => wrapper(fence));
+    assert.notEqual(hidden, contents);
+    writeFileSync(safeGitPath, hidden, 'utf8');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1, `${name} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /fixed command section|fixed command sequence|fenced block|matching fenced block/);
+  }
+});
+
+test('validator rejects a state machine hidden in the delivery preamble', (context) => {
+  for (const [name, wrapper] of [
+    ['HTML comment', (line) => `<!-- ${line} -->`],
+    ['template block', (line) => `<template>\n${line}\n</template>`],
+    ['raw HTML block', (line) => `<div>\n${line}\n</div>\n`],
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
+    const stateMachine = '**Plan → Implement and Dev-check → Freeze candidate → Selected gates → Fix/re-freeze loop → Producer/CEO merge decision → regular merge → Selected post-merge checks → Authoritative status update**';
+    mutateText(workflowPath, stateMachine, wrapper(stateMachine));
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1, `${name} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /preamble must contain the canonical state machine/);
+  }
+});
+
 test('validator rejects critical state exit and artifact authority mutations', (context) => {
   for (const mutation of [
     {

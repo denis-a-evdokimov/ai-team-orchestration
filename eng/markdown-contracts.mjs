@@ -45,43 +45,37 @@ function structuralLines(markdown) {
   let rawHtmlUntilBlank = false;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const marker = fenceMarker(lines[index]);
-    if (marker && fence === null) {
-      fence = marker;
-      result.push({ fenced: true, index, line: lines[index] });
-      continue;
-    }
     if (fence !== null) {
       const closing = new RegExp(`^ {0,3}${fence.character}{${fence.length},}[ \\t]*$`).exec(lines[index]);
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'code-fence', fenced: true, index, line: lines[index] });
       if (closing) {
         fence = null;
       }
       continue;
     }
     if (htmlComment) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       if (lines[index].includes('-->')) {
         htmlComment = false;
       }
       continue;
     }
     if (rawHtmlTag !== null) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       if (new RegExp(`</${rawHtmlTag}>`, 'i').test(lines[index])) {
         rawHtmlTag = null;
       }
       continue;
     }
     if (rawHtmlUntilBlank) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       if (lines[index].trim() === '') {
         rawHtmlUntilBlank = false;
       }
       continue;
     }
     if (lines[index].includes('<!--')) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       if (!lines[index].includes('-->', lines[index].indexOf('<!--') + 4)) {
         htmlComment = true;
       }
@@ -89,7 +83,7 @@ function structuralLines(markdown) {
     }
     const rawHtml = /^ {0,3}<(script|style|pre|textarea|template)(?:\s|>)/i.exec(lines[index]);
     if (rawHtml) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       if (!new RegExp(`</${rawHtml[1]}>`, 'i').test(lines[index])) {
         rawHtmlTag = rawHtml[1];
       }
@@ -100,12 +94,20 @@ function structuralLines(markdown) {
       || /^ {0,3}<\?/.test(lines[index])
       || /^ {0,3}<![A-Z]/.test(lines[index])
       || /^ {0,3}<!\[CDATA\[/.test(lines[index])) {
-      result.push({ fenced: true, index, line: lines[index] });
+      result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
       rawHtmlUntilBlank = true;
       continue;
     }
+    const marker = fenceMarker(lines[index]);
+    if (marker) {
+      fence = marker;
+      result.push({ kind: 'code-fence', fenced: true, index, line: lines[index] });
+      continue;
+    }
+    const indented = /^(?: {4}|\t)/.test(lines[index]);
     result.push({
-      fenced: /^(?: {4}|\t)/.test(lines[index]),
+      kind: indented ? 'indented-code' : 'visible',
+      fenced: indented,
       index,
       line: lines[index],
     });
@@ -160,7 +162,7 @@ export function fencedBlocks(markdown, language = null) {
 
   for (const entry of structural) {
     const line = entry.line;
-    const opening = entry.fenced ? fenceMarker(line) : null;
+    const opening = entry.kind === 'code-fence' ? fenceMarker(line) : null;
     if (current === null) {
       if (opening) {
         current = {
@@ -173,6 +175,9 @@ export function fencedBlocks(markdown, language = null) {
       continue;
     }
 
+    if (entry.kind !== 'code-fence') {
+      throw new Error('Fenced block structure changed unexpectedly.');
+    }
     const closing = new RegExp(`^ {0,3}${current.marker}{${current.length},}[ \\t]*$`).exec(line);
     if (closing) {
       blocks.push(current);
@@ -200,14 +205,16 @@ export function extractUniqueFence(markdown, language = null) {
 }
 
 export function documentPreamble(markdown) {
-  const { lines, structural } = structuralLines(markdown);
+  const { structural } = structuralLines(markdown);
   const firstH2 = structural.find((entry) => {
     if (entry.fenced) {
       return false;
     }
     return headingInfo(entry.line)?.level === 2;
   });
-  return lines.slice(0, firstH2?.index ?? lines.length).join('\n').trim();
+  return withoutBlankBoundaryLines(structural
+    .filter((entry) => !entry.fenced && entry.index < (firstH2?.index ?? Number.POSITIVE_INFINITY))
+    .map((entry) => entry.line));
 }
 
 export function parseOrderedBlockquoteFields(markdown, expectedFields, expectedTitle) {
