@@ -57,13 +57,16 @@ function containerView(line, continuationIndent = 0) {
 
   let listIndent = 0;
   while (true) {
-    const listItem = /^ {0,3}(?:[-+*]|\d{1,9}[.)])([ \t]{1,4})/.exec(content);
+    const listItem = /^ {0,3}(?:[-+*]|\d{1,9}[.)])([ \t]+)/.exec(content);
     if (!listItem) {
       break;
     }
     contained = true;
-    listIndent += listItem[0].length;
-    content = content.slice(listItem[0].length);
+    const markerLength = listItem[0].length - listItem[1].length;
+    const paddingLength = listItem[1].length <= 4 ? listItem[1].length : 1;
+    const consumedLength = markerLength + paddingLength;
+    listIndent += consumedLength;
+    content = content.slice(consumedLength);
   }
 
   return { contained, content, listIndent };
@@ -230,7 +233,9 @@ export function fencedBlocks(markdown, language = null) {
 
   for (const entry of structural) {
     const line = entry.line;
-    const opening = entry.kind === 'code-fence' ? fenceMarker(line) : null;
+    const opening = entry.kind === 'code-fence' && /^[`~]/.test(line)
+      ? fenceMarker(line)
+      : null;
     if (current === null) {
       if (opening) {
         current = {

@@ -1073,6 +1073,42 @@ test('validator rejects lifecycle contracts hidden in CommonMark container fence
   }
 });
 
+test('validator rejects critical clauses hidden in CommonMark container blocks', (context) => {
+  const wrappers = [
+    ['blockquote comment', (text) => `> <!--\n> ${text}\n> -->`],
+    ['nested blockquote HTML', (text) => `> > <template>\n> > ${text}\n> > </template>`],
+    ['list comment', (text) => `- <!--\n  ${text}\n  -->`],
+    ['list raw HTML', (text) => `- <template>\n  ${text}\n  </template>`],
+    ['blockquote indented code', (text) => `>     ${text}`],
+    ['list indented code', (text) => `-     ${text}`],
+  ];
+  for (const [name, wrapper] of wrappers) {
+    const targetRoot = createRepositoryCopy(context);
+    const devPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');
+    const clause = 'capture the full tested local commit ID before pushing';
+    mutateText(devPath, clause, '[hidden policy clause]');
+    mutateText(devPath, '## Capability Protocol', `${wrapper(clause)}\n\n## Capability Protocol`);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1, `${name} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /Dev protocol must contain/);
+  }
+});
+
+test('validator rejects indented list-continuation command fences', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  const safeGitPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'safe-git-values.md');
+  const contents = readFileSync(safeGitPath, 'utf8');
+  const hidden = contents.replace(
+    /```text\r?\n([\s\S]*?)```/g,
+    (_fence, body) => `- command example\n  \`\`\`text\n${body.split(/\r?\n/).map((line) => `  ${line}`).join('\n')}  \`\`\``,
+  );
+  assert.notEqual(hidden, contents);
+  writeFileSync(safeGitPath, hidden, 'utf8');
+  const result = runValidator(targetRoot);
+  assert.equal(result.status, 1, result.stdout || result.stderr);
+  assert.match(result.stderr, /fixed command section|fixed command sequence|fenced block|matching fenced block/);
+});
+
 test('validator rejects stale-evidence freeze and capability contradictions', (context) => {
   for (const mutation of [
     {
