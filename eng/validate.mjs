@@ -571,8 +571,9 @@ function requireExactTable(table, expectedHeader, expectedRows, filePath, label)
 }
 
 function requireText(contents, required, filePath, label) {
+  const visibleContents = unfencedLines(contents).join('\n');
   for (const value of required) {
-    if (!contents.includes(value)) {
+    if (!visibleContents.includes(value)) {
       addError(`${repoPath(filePath)} ${label} must contain "${value}".`);
     }
   }
@@ -656,6 +657,7 @@ function validateCanonicalDelivery(deliveryPath) {
     }
   }
   const expectedArtifactOwners = new Map([
+    ['PROJECT_BRIEF Sections 7, 8, and 15', 'Producer; CEO approves risk baseline'],
     ['Sprint plan', 'Producer'],
     ['`progress.md`', 'Dev'],
     ['`done.md`', 'Dev'],
@@ -668,11 +670,12 @@ function validateCanonicalDelivery(deliveryPath) {
   requireExactTable(
     artifactTable,
     ['Artifact', 'Owner', 'Authority'],
-    ['PROJECT_BRIEF Sections 7, 8, and 15', ...expectedArtifactOwners.keys()],
+    [...expectedArtifactOwners.keys()],
     deliveryPath,
     'artifact table',
   );
   const expectedArtifactAuthority = new Map([
+    ['PROJECT_BRIEF Sections 7, 8, and 15', 'Project baseline and authoritative current state.'],
     ['Sprint plan', 'Static scope, repositories, risk, checks, gate selection, and reopen budget. Final before Dev handoff; no live reopen log.'],
     ['`progress.md`', 'Recovery-only implementation progress, bugs, decisions, and Dev-check results. Not gate authority.'],
     ['`done.md`', 'Pre-freeze implementation summary: built/deferred work, files, setup, known issues, Dev checks, proposed status changes. No candidate or live gate state.'],
@@ -917,8 +920,8 @@ function validateSprintTemplate(sprintPlanPath) {
       addError(`${repoPath(sprintPlanPath)} Final approval selection must be "Producer / CEO / both".`);
     }
     const freezeSelection = gateTable?.rowsByName.get('Freeze detection')?.[1] ?? '';
-    if (!freezeSelection.includes('branch protection') || freezeSelection.trim() === 'none') {
-      addError(`${repoPath(sprintPlanPath)} Freeze detection must define an enforceable mechanism.`);
+    if (freezeSelection !== '[branch protection / stale-check dismissal / PR marker plus head comparison / other]') {
+      addError(`${repoPath(sprintPlanPath)} Freeze detection must use the canonical enforceable-mechanism template.`);
     }
     if (!contractSection(planTemplate, 'Baseline Override (Only When Needed)', sprintPlanPath)) {
       addError(`${repoPath(sprintPlanPath)} must define the CEO/maintainer baseline override section.`);
@@ -1068,15 +1071,17 @@ function validateAgentsAndPublicDocs() {
       addError('README Quick Start must plan checks/gates before execution.');
     }
     const planSection = contractSection(readme, '2. Plan a sprint', readmePath, 3);
-    if (planSection) {
-      requireText(planSection, ['Before Dev starts', 'at least one concrete check', 'reopen budget'], readmePath, 'Quick Start planning');
+    const planPrompt = planSection && contractFence(planSection, '', readmePath, 'Quick Start planning fence');
+    if (planPrompt) {
+      requireText(planPrompt, ['Before Dev starts', 'at least one concrete check', 'reopen budget'], readmePath, 'Quick Start planning');
     }
     if (readme.includes('### 4. Select proportionate gates')) {
       addError('README must not defer gate selection until after Dev execution.');
     }
     const executeSection = contractSection(readme, '3. Execute (in a separate VS Code window)', readmePath, 3);
-    if (executeSection) {
-      requireText(executeSection, ['capture the full tested local commit ID', 'observed head equals that captured ID', 'mismatch means Hold'], readmePath, 'Quick Start execution');
+    const executePrompt = executeSection && contractFence(executeSection, '', readmePath, 'Quick Start execution fence');
+    if (executePrompt) {
+      requireText(executePrompt, ['capture the full tested local commit ID', 'observed head equals that captured ID', 'mismatch means Hold'], readmePath, 'Quick Start execution');
     }
   }
 

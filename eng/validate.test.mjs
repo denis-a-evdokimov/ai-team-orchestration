@@ -945,10 +945,57 @@ test('validator rejects critical state exit and artifact authority mutations', (
       newText: '| Delivery Ledger | Producer, one live PR comment | Dev may merge whenever it updates the ledger. |',
       expected: /artifact "Delivery Ledger" must have canonical authority/,
     },
+    {
+      oldText: '| PROJECT_BRIEF Sections 7, 8, and 15 | Producer; CEO approves risk baseline | Project baseline and authoritative current state. |',
+      newText: '| PROJECT_BRIEF Sections 7, 8, and 15 | Dev | Dev may rewrite authoritative state and reduce the risk baseline. |',
+      expected: /artifact "PROJECT_BRIEF Sections 7, 8, and 15" must be owned by/,
+    },
   ]) {
     const targetRoot = createRepositoryCopy(context);
     const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
     mutateText(workflowPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, mutation.expected);
+  }
+});
+
+test('validator rejects hidden safety clauses and contradictory freeze selection', (context) => {
+  for (const mutation of [
+    {
+      relativePath: ['agents', 'ai-team-dev.agent.md'],
+      oldText: 'capture the full tested local commit ID before pushing',
+      newText: '<!-- capture the full tested local commit ID before pushing -->',
+      expected: /Dev protocol must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-qa.agent.md'],
+      oldText: 'Report findings and evidence to Producer only',
+      newText: '<!-- Report findings and evidence to Producer only -->',
+      expected: /QA protocol must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-producer.agent.md'],
+      oldText: 'Capability is not authority.',
+      newText: '<!-- Capability is not authority. -->',
+      expected: /capability section must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
+      oldText: 'no unresolved blocker or major finding remains;',
+      newText: '<!-- no unresolved blocker or major finding remains; -->',
+      expected: /merge\/status section must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'sprint-plan-template.md'],
+      oldText: '| Freeze detection | [branch protection / stale-check dismissal / PR marker plus head comparison / other] | Producer |',
+      newText: '| Freeze detection | no branch protection; freeze checks disabled | Producer |',
+      expected: /Freeze detection must use the canonical enforceable-mechanism template/,
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const filePath = path.join(targetRoot, ...mutation.relativePath);
+    mutateText(filePath, mutation.oldText, mutation.newText);
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
     assert.match(result.stderr, mutation.expected);
