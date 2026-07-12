@@ -4,6 +4,18 @@ function normalizedLines(markdown) {
     .split('\n');
 }
 
+function withoutBlankBoundaryLines(lines) {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start].trim() === '') {
+    start += 1;
+  }
+  while (end > start && lines[end - 1].trim() === '') {
+    end -= 1;
+  }
+  return lines.slice(start, end).join('\n');
+}
+
 function fenceMarker(line) {
   const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
   if (!match) {
@@ -138,7 +150,7 @@ export function extractUniqueSection(markdown, heading, level = 2) {
       break;
     }
   }
-  return lines.slice(start, end).join('\n').trim();
+  return withoutBlankBoundaryLines(lines.slice(start, end));
 }
 
 export function fencedBlocks(markdown, language = null) {
@@ -184,7 +196,7 @@ export function extractUniqueFence(markdown, language = null) {
   if (matches.length !== 1) {
     throw new Error(`Expected exactly one ${language ?? 'matching'} fenced block; found ${matches.length}.`);
   }
-  return matches[0].lines.join('\n').trim();
+  return withoutBlankBoundaryLines(matches[0].lines);
 }
 
 export function documentPreamble(markdown) {

@@ -33,7 +33,7 @@ Publish a trustworthy VS Code agent plugin that coordinates Producer, Dev, and o
 ## Scale context
 
 - Small repository: three agent files, one skill with six reference files, Node validators/exporter, and no dependency tree.
-- Current review scope: 12 changed files, 496 additions, and 227 deletions relative to `origin/main`.
+- Current review scope: 24 changed files, about 3.2k additions, and 0.6k deletions relative to `origin/main`.
 - Optimize first for correctness, unambiguous state transitions, public usability, and safe tool execution. Micro-optimizing linear file scans is not valuable at this scale.
 
 ## Privacy / EUII surface
@@ -59,6 +59,9 @@ Publish a trustworthy VS Code agent plugin that coordinates Producer, Dev, and o
 - Configured path validation must reject Windows junction/reparse-point escapes as well as POSIX symlinks.
 - Repository/issue content is untrusted data; embedded directives must not gain authority merely because agents inherit terminal, GitHub, MCP, or extension tools.
 - Public quick starts can drift from canonical lifecycle ordering even when the deeper references are correct.
+- Candidate checks can be misbound if the tested local commit is not captured before push and compared with the observed PR head.
+- Export preparation must pin one target commit; mutable target-owned plugin fields cannot be read from one commit and patched against another.
+- A visible normative heading is insufficient when its body can be hidden in comments, fences, raw HTML, or indented code.
 
 ## Severity calibration notes
 
@@ -78,13 +81,17 @@ Publish a trustworthy VS Code agent plugin that coordinates Producer, Dev, and o
 
 ## Architecture & drift watch
 
-- `validateDeliveryWorkflow()` — growing-method / mixed-responsibility validator; policy prose, template schema, role vocabulary, branch rules, and stale-text scanning are accumulating together — **escalate on next policy edit; split by existing artifact boundaries, not a generic framework**.
-- Delivery-policy duplication — lifecycle and gate-selection semantics appear across the canonical workflow, skill, three agents, project brief, sprint template, README, and validator literals — **escalate now where duplicated mutable state causes contradictions; retain only short role-specific summaries**.
-- Gate-state artifacts — plan, progress, done, live PR evidence, and optional archive overlap — **watch; plan should own selection, live artifacts should own post-freeze status**.
-- Validator path provenance — exporter has stronger path/link defenses than root plugin validation — **escalate now; align configured-path containment checks**.
+- `validateCanonicalDelivery()` / `validateSprintTemplate()` — cohesive artifact validators; split only if another independent responsibility lands or either grows beyond roughly 220 lines — **watch**.
+- Delivery-policy duplication — lifecycle semantics appear across canonical workflow, role summaries, templates, README, and validator contracts; intentional shared-agent duplication is accepted — **watch; escalate only on a real contradiction or unguarded safety rule**.
+- Gate-state artifacts — plan owns selection, progress/Done own pre-freeze implementation recovery, Delivery Ledger owns live state, archive is optional — **resolved**.
+- Validator/exporter path provenance — shared path safety covers configured roots, managed paths, hard links, and patch output parents — **resolved**.
+- Canonical synchronization ownership — one shared pure manifest contract protects validator and exporter — **resolved**.
+- Export target snapshot — planning, target-owned metadata, private clone, and publication bind to one target commit; movement aborts — **resolved**.
+- Visible normative Markdown — structural validation excludes comments, fences, raw HTML, and indented code for safety-critical clauses — **resolved**.
 
 ## Review history (newest first)
 
 | Date | Change | Verdict | Blockers | Notable |
 |------|--------|---------|----------|---------|
+| 2026-07-12 | `feature/sync-accepted-ai-team-fixes` candidate hardening | Pending final review | 0 | Pre-push candidate binding, visible contracts, canonical manifest authority, real-path output containment, and pinned target snapshot |
 | 2026-07-11 | `feature/sync-accepted-ai-team-fixes` plus working tree | CHANGES-REQUESTED | 0 | Post-freeze reopen artifact, candidate binding, QA routing, quick-start order, fork setup, shell/trust boundaries, validator escapes/false-greens, and stale Awesome marketplace docs |

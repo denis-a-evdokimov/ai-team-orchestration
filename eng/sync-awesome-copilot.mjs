@@ -23,6 +23,9 @@ import {
   tryLstat,
   validatePortableRelativePath,
 } from './path-safety.mjs';
+import {
+  assertCanonicalSyncManifest,
+} from './sync-manifest-contract.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_SOURCE_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -324,7 +327,7 @@ function parseLsTree(buffer, label) {
   return entries;
 }
 
-function readHeadBlob(source, entry, label) {
+function readCommitBlob(rootInfo, entry, label, revisionLabel) {
   if (entry.mode === '120000') {
     throw new Error(`${label} is a tracked symbolic link; canonical managed sources must be regular files.`);
   }
@@ -332,19 +335,19 @@ function readHeadBlob(source, entry, label) {
     throw new Error(`${label} is not a tracked regular file (mode ${entry.mode}, type ${entry.type}).`);
   }
   return requireGitSuccess(
-    source.root.path,
+    rootInfo.path,
     ['cat-file', 'blob', entry.objectId],
-    `Unable to read ${label} from source HEAD`,
+    `Unable to read ${label} from ${revisionLabel}`,
     { binary: true },
   );
 }
 
-function getHeadEntry(source, portablePath, label) {
-  assertSafeManagedPath(source.root, portablePath, label);
+function getCommitEntry(rootInfo, commit, portablePath, label, revisionLabel) {
+  assertSafeManagedPath(rootInfo, portablePath, label);
   const output = requireGitSuccess(
-    source.root.path,
-    ['ls-tree', '-z', source.head, '--', `:(literal)${portablePath}`],
-    `Unable to inspect ${label} in source HEAD`,
+    rootInfo.path,
+    ['ls-tree', '-z', commit, '--', `:(literal)${portablePath}`],
+    `Unable to inspect ${label} in ${revisionLabel}`,
     { binary: true },
   );
   const entries = parseLsTree(output, label)
@@ -356,7 +359,25 @@ function getHeadEntry(source, portablePath, label) {
 }
 
 function readHeadFile(source, portablePath, label = portablePath) {
-  return readHeadBlob(source, getHeadEntry(source, portablePath, label), label);
+  const entry = getCommitEntry(
+    source.root,
+    source.head,
+    portablePath,
+    label,
+    'source HEAD',
+  );
+  return readCommitBlob(source.root, entry, label, 'source HEAD');
+}
+
+function readTargetCommitFile(targetRoot, targetHead, portablePath, label = portablePath) {
+  const entry = getCommitEntry(
+    targetRoot,
+    targetHead,
+    portablePath,
+    label,
+    'pinned target HEAD',
+  );
+  return readCommitBlob(targetRoot, entry, label, 'pinned target HEAD');
 }
 
 function listHeadSkillFiles(source, sourceSkill) {
@@ -396,7 +417,12 @@ function listHeadSkillFiles(source, sourceSkill) {
     validatePortableRelativePath(relativePath, `Tracked skill path ${entry.path}`);
     assertSafeManagedPath(source.root, entry.path, `Tracked skill path ${entry.path}`);
     return {
-      bytes: readHeadBlob(source, entry, `Tracked skill file ${entry.path}`),
+      bytes: readCommitBlob(
+        source.root,
+        entry,
+        `Tracked skill file ${entry.path}`,
+        'source HEAD',
+      ),
       relativePath,
     };
   });
@@ -529,6 +555,14 @@ function assertCleanWorktree(rootInfo, label) {
   }
 }
 
+function resolveHeadCommit(rootInfo, label) {
+  return requireGitSuccess(
+    rootInfo.path,
+    ['rev-parse', '--verify', 'HEAD^{commit}'],
+    `Unable to resolve ${label} HEAD`,
+  ).trim();
+}
+
 function loadSource(sourceRoot) {
   const root = createRootInfo(sourceRoot, 'Canonical source root');
   assertGitRoot(root, 'Canonical source');
@@ -536,11 +570,7 @@ function loadSource(sourceRoot) {
   const branch = getAttachedFeatureBranch(root, 'Canonical source');
   assertNoStagedChanges(root, 'Canonical source');
   assertCleanWorktree(root, 'Canonical source');
-  const head = requireGitSuccess(
-    root.path,
-    ['rev-parse', '--verify', 'HEAD'],
-    'Unable to resolve canonical source HEAD',
-  ).trim();
+  const head = resolveHeadCommit(root, 'canonical source');
   const source = { branch, head, root };
   const configBytes = readHeadFile(
     source,
@@ -602,6 +632,7 @@ function validateConfig(config) {
     }
     managedFields.add(field);
   }
+  assertCanonicalSyncManifest(config);
 }
 
 function verifyTarget(targetRoot) {
@@ -695,14 +726,14 @@ function listWorktreeChanges(rootInfo, relativePaths = null) {
   return changes;
 }
 
-function listTrackedTargetFiles(targetRoot) {
+function listTrackedTargetFiles(targetRoot, targetHead) {
   const output = requireGitSuccess(
     targetRoot.path,
-    ['ls-files', '-z'],
-    'Unable to enumerate tracked target files',
+    ['ls-tree', '-r', '-z', targetHead],
+    'Unable to enumerate files in pinned target HEAD',
     { binary: true },
   );
-  return new Set(listGitPaths(output, 'Tracked target path'));
+  return new Set(parseLsTree(output, 'Pinned target tree').map((entry) => entry.path));
 }
 
 function isTargetPathIgnored(targetRoot, relativePath) {
@@ -731,7 +762,7 @@ function addDesiredFile(plan, relativePath, bytes) {
   plan.desired.push({ bytes, relativePath });
 }
 
-function buildPlan(source, targetRoot, config) {
+function buildPlan(source, targetRoot, targetHead, targetBranch, config) {
   const plan = {
     blockers: [],
     desired: [],
@@ -741,8 +772,10 @@ function buildPlan(source, targetRoot, config) {
     targetSkillRoot: targetRelativePath('skills', config.skill.target),
     sourceHead: source.head,
     sourceRoot: source.root,
+    targetBranch,
+    targetHead,
     targetRoot,
-    trackedTargetFiles: listTrackedTargetFiles(targetRoot),
+    trackedTargetFiles: listTrackedTargetFiles(targetRoot, targetHead),
   };
 
   for (const agentId of config.agents) {
@@ -813,7 +846,15 @@ function buildPlan(source, targetRoot, config) {
     plan.blockers.push(`Target plugin manifest is not a regular file: ${targetPluginRelative}`);
     addDesiredFile(plan, targetPluginRelative, null);
   } else {
-    const targetPlugin = parseJson(targetPluginPath, 'Target plugin manifest');
+    const targetPlugin = parseJsonBuffer(
+      readTargetCommitFile(
+        targetRoot,
+        targetHead,
+        targetPluginRelative,
+        'Target plugin manifest',
+      ),
+      'Target plugin manifest',
+    );
     if (!targetPlugin || typeof targetPlugin !== 'object' || Array.isArray(targetPlugin)) {
       throw new Error('Target plugin manifest must contain a JSON object.');
     }
@@ -984,15 +1025,10 @@ function createPatchClone(plan, actions) {
       path.join(cloneInfo.path, '.git', 'info', 'attributes'),
       '* -text -filter -diff -ident -working-tree-encoding\n',
     );
-    const targetHead = requireGitSuccess(
-      plan.targetRoot.path,
-      ['rev-parse', '--verify', 'HEAD'],
-      'Unable to resolve target HEAD',
-    ).trim();
     requireGitSuccess(
       cloneInfo.path,
-      ['checkout', '--detach', '--force', targetHead],
-      'Unable to check out target HEAD in private clone',
+      ['checkout', '--detach', '--force', plan.targetHead],
+      'Unable to check out pinned target HEAD in private clone',
     );
 
     const desiredByPath = new Map(plan.desired.map((file) => [file.relativePath, file]));
@@ -1110,56 +1146,91 @@ function applyGitPatch(targetRoot, patch, checkOnly) {
   }
 }
 
-function preparePatch(plan, inspection, outputPath, logger, patchConsumer) {
+function resolvePatchOutput(plan, outputPath) {
+  const resolvedOutput = path.resolve(outputPath);
+  const outputDirectory = createRootInfo(
+    path.dirname(resolvedOutput),
+    'Patch output directory',
+  );
+  const safeOutput = path.join(outputDirectory.realPath, path.basename(resolvedOutput));
+  if (isContainedPath(plan.sourceRoot.realPath, safeOutput, true)
+    || isContainedPath(plan.targetRoot.realPath, safeOutput, true)) {
+    throw new Error('Patch output must be outside both canonical source and Awesome target repositories.');
+  }
+  if (tryLstat(safeOutput)) {
+    throw new Error(`Patch output must not already exist: ${safeOutput}`);
+  }
+  return { outputDirectory, safeOutput };
+}
+
+function assertStableTargetSnapshot(plan) {
+  assertWriteSafe(plan.targetRoot);
+  const branch = getAttachedFeatureBranch(plan.targetRoot, 'Prepare mode target');
+  if (branch !== plan.targetBranch) {
+    throw new Error(`Prepare mode target branch changed from ${plan.targetBranch} to ${branch}.`);
+  }
+  assertTargetBasedOnUpstreamMain(plan.targetRoot);
+  const targetHead = resolveHeadCommit(plan.targetRoot, 'Awesome Copilot target');
+  if (targetHead !== plan.targetHead) {
+    throw new Error(`Awesome Copilot target HEAD changed during preparation: expected ${plan.targetHead}, found ${targetHead}.`);
+  }
+}
+
+function preparePatch(
+  plan,
+  inspection,
+  outputPath,
+  logger,
+  patchConsumer,
+  beforePatchClone,
+) {
   if (inspection.blockers.length > 0) {
     throw new Error(inspection.blockers.join('\n'));
   }
 
+  const output = resolvePatchOutput(plan, outputPath);
   const actions = plannedActions(inspection);
   if (actions.length === 0) {
+    assertStableTargetSnapshot(plan);
     logger('Awesome Copilot checkout is already aligned.');
     return { actions, patchPath: null };
   }
 
   let patchWorkspace;
   try {
+    if (beforePatchClone) {
+      beforePatchClone();
+    }
     patchWorkspace = createPatchClone(plan, actions);
-    const resolvedOutput = path.resolve(outputPath);
-    const outputDirectory = createRootInfo(
-      path.dirname(resolvedOutput),
-      'Patch output directory',
-    );
-    const safeOutput = path.join(outputDirectory.realPath, path.basename(resolvedOutput));
-    if (isContainedPath(plan.sourceRoot.realPath, safeOutput, true)
-      || isContainedPath(plan.targetRoot.realPath, safeOutput, true)) {
-      throw new Error('Patch output must be outside both canonical source and Awesome target repositories.');
-    }
-    const outputStat = tryLstat(safeOutput);
-    if (outputStat) {
-      throw new Error(`Patch output must not already exist: ${safeOutput}`);
-    }
+    assertStableTargetSnapshot(plan);
 
     const recheckedOutputDirectory = createRootInfo(
-      outputDirectory.path,
+      output.outputDirectory.path,
       'Patch output directory',
     );
-    if (!sameFilesystemPath(recheckedOutputDirectory.realPath, outputDirectory.realPath)) {
+    if (!sameFilesystemPath(recheckedOutputDirectory.realPath, output.outputDirectory.realPath)) {
       throw new Error('Patch output directory changed during preparation.');
     }
-    if (tryLstat(safeOutput)) {
-      throw new Error(`Patch output must not already exist: ${safeOutput}`);
+    if (tryLstat(output.safeOutput)) {
+      throw new Error(`Patch output must not already exist: ${output.safeOutput}`);
     }
 
-    writeFileSync(safeOutput, patchWorkspace.patch, { flag: 'wx' });
-    logger(`Prepared verified binary patch: ${safeOutput}`);
+    assertStableTargetSnapshot(plan);
+    writeFileSync(output.safeOutput, patchWorkspace.patch, { flag: 'wx' });
+    logger(`Prepared verified binary patch: ${output.safeOutput}`);
     if (patchConsumer) {
-      patchConsumer({ actions, patch: patchWorkspace.patch, patchPath: safeOutput, targetRoot: plan.targetRoot });
+      patchConsumer({
+        actions,
+        patch: patchWorkspace.patch,
+        patchPath: output.safeOutput,
+        targetRoot: plan.targetRoot,
+      });
     }
     for (const action of actions) {
       logger(`${action.kind.toUpperCase()} ${action.relativePath}`);
     }
     logger('The target checkout was not modified. Recheck it, then apply the patch explicitly with your trusted Git client.');
-    return { actions, patchPath: safeOutput };
+    return { actions, patchPath: output.safeOutput };
   } finally {
     if (patchWorkspace) {
       rmSync(patchWorkspace.temporaryRoot, { force: true, recursive: true });
@@ -1169,6 +1240,7 @@ function preparePatch(plan, inspection, outputPath, logger, patchConsumer) {
 
 function logProvenance(plan, logger) {
   logger(`Source HEAD: ${plan.sourceHead}`);
+  logger(`Target HEAD: ${plan.targetHead}`);
   logger(`Plugin version: ${plan.pluginVersion}`);
 }
 
@@ -1177,6 +1249,7 @@ export function syncAwesomeCopilot({
   write = false,
   output,
   patchConsumer,
+  beforePatchClone,
   sourceRoot = DEFAULT_SOURCE_ROOT,
   logger = console.log,
 }) {
@@ -1187,10 +1260,20 @@ export function syncAwesomeCopilot({
   const source = loadSource(sourceRoot);
   validateConfig(source.config);
   const verifiedTargetRoot = verifyTarget(targetRoot);
-  getAttachedFeatureBranch(verifiedTargetRoot, write ? 'Prepare mode target' : 'Check mode target');
+  const targetBranch = getAttachedFeatureBranch(
+    verifiedTargetRoot,
+    write ? 'Prepare mode target' : 'Check mode target',
+  );
   assertTargetBasedOnUpstreamMain(verifiedTargetRoot);
+  const targetHead = resolveHeadCommit(verifiedTargetRoot, 'Awesome Copilot target');
 
-  const plan = buildPlan(source, verifiedTargetRoot, source.config);
+  const plan = buildPlan(
+    source,
+    verifiedTargetRoot,
+    targetHead,
+    targetBranch,
+    source.config,
+  );
   const inspection = inspectPlan(plan);
 
   if (!write) {
@@ -1214,6 +1297,7 @@ export function syncAwesomeCopilot({
       drift: inspection.drift,
       pluginVersion: plan.pluginVersion,
       sourceHead: plan.sourceHead,
+      targetHead: plan.targetHead,
     };
   }
 
@@ -1224,11 +1308,16 @@ export function syncAwesomeCopilot({
   if (inspection.blockers.length > 0) {
     throw new Error(inspection.blockers.join('\n'));
   }
-  assertWriteSafe(verifiedTargetRoot);
-  getAttachedFeatureBranch(verifiedTargetRoot, 'Prepare mode target');
-  assertTargetBasedOnUpstreamMain(verifiedTargetRoot);
+  assertStableTargetSnapshot(plan);
   const finalInspection = inspectPlan(plan);
-  const prepared = preparePatch(plan, finalInspection, output, logger, patchConsumer);
+  const prepared = preparePatch(
+    plan,
+    finalInspection,
+    output,
+    logger,
+    patchConsumer,
+    beforePatchClone,
+  );
   logProvenance(plan, logger);
   return {
     actions: prepared.actions,
@@ -1238,6 +1327,7 @@ export function syncAwesomeCopilot({
     patchPath: prepared.patchPath,
     pluginVersion: plan.pluginVersion,
     sourceHead: plan.sourceHead,
+    targetHead: plan.targetHead,
   };
 }
 

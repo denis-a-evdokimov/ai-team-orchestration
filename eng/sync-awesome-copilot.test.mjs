@@ -91,6 +91,10 @@ function createSourceFixture(branch = 'feature/source-test') {
     fileURLToPath(new URL('./path-safety.mjs', import.meta.url)),
     path.join(sourceRoot, 'eng', 'path-safety.mjs'),
   );
+  cpSync(
+    fileURLToPath(new URL('./sync-manifest-contract.mjs', import.meta.url)),
+    path.join(sourceRoot, 'eng', 'sync-manifest-contract.mjs'),
+  );
   initializeGitRepository(sourceRoot, branch);
   return sourceRoot;
 }
@@ -215,6 +219,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   const initialCheck = syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot });
   assert.equal(initialCheck.aligned, false);
   assert.equal(initialCheck.sourceHead, runGit(sourceRoot, 'rev-parse', 'HEAD'));
+  assert.equal(initialCheck.targetHead, runGit(fixture.targetRoot, 'rev-parse', 'HEAD'));
   assert.equal(initialCheck.pluginVersion, '2.0.0');
   assert.ok(initialCheck.drift.some((item) => item.kind === 'missing'));
   assert.ok(initialCheck.drift.some((item) => item.kind === 'changed'));
@@ -229,6 +234,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.equal(driftCli.status, 1);
   assert.match(driftCli.stdout, /managed drift item/);
   assert.match(driftCli.stdout, /Source HEAD: [a-f0-9]{40,64}/);
+  assert.match(driftCli.stdout, /Target HEAD: [a-f0-9]{40,64}/);
   assert.match(driftCli.stdout, /Plugin version: 2\.0\.0/);
 
   const logs = [];
@@ -240,6 +246,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   });
   assert.equal(writeResult.aligned, true);
   assert.ok(logs.includes(`Source HEAD: ${writeResult.sourceHead}`));
+  assert.ok(logs.includes(`Target HEAD: ${writeResult.targetHead}`));
   assert.ok(logs.includes('Plugin version: 2.0.0'));
   assert.equal(existsSync(path.join(fixture.targetSkillRoot, 'stale.txt')), false);
   assert.match(
@@ -551,6 +558,78 @@ test('prepare mode rejects missing or linked patch output directories', (context
   assert.equal(runGit(fixture.targetRoot, 'status', '--porcelain=v1', '--untracked-files=all'), targetBefore);
 });
 
+test('aligned prepare still validates the requested patch output', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-aligned-output-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, outputRoot);
+
+  syncAwesomeCopilot({
+    logger: QUIET,
+    sourceRoot,
+    targetRoot: fixture.targetRoot,
+    write: true,
+  });
+  commitAll(fixture.targetRoot, 'align target');
+  setUpstreamMain(fixture.targetRoot);
+
+  const missingOutput = path.join(outputRoot, 'missing', 'sync.patch');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: missingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /Patch output directory does not exist/,
+  );
+
+  const existingOutput = path.join(outputRoot, 'existing.patch');
+  writeFileSync(existingOutput, 'stale\n');
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      logger: QUIET,
+      output: existingOutput,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /must not already exist/,
+  );
+  assert.equal(readFileSync(existingOutput, 'utf8'), 'stale\n');
+});
+
+test('prepare aborts when target HEAD moves after planning', (context) => {
+  const sourceRoot = createSourceFixture();
+  const fixture = createTargetFixture();
+  const outputRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-moving-target-'));
+  registerCleanup(context, sourceRoot);
+  registerCleanup(context, fixture.targetRoot);
+  registerCleanup(context, outputRoot);
+  const output = path.join(outputRoot, 'sync.patch');
+
+  assert.throws(
+    () => syncAwesomeCopilotCore({
+      beforePatchClone: () => {
+        const targetPlugin = JSON.parse(readFileSync(fixture.pluginPath, 'utf8'));
+        targetPlugin.repository = 'https://example.invalid/moved-target';
+        writeJson(fixture.pluginPath, targetPlugin);
+        commitAll(fixture.targetRoot, 'change target-owned metadata during prepare');
+      },
+      logger: QUIET,
+      output,
+      sourceRoot,
+      targetRoot: fixture.targetRoot,
+      write: true,
+    }),
+    /target HEAD changed during preparation/,
+  );
+  assert.equal(existsSync(output), false);
+});
+
 test('global process-capable Git filters are ignored during checks', (context) => {
   const sourceRoot = createSourceFixture();
   const fixture = createTargetFixture();
@@ -604,6 +683,36 @@ test('manifest rejects duplicate and traversal-like agents, skills, and plugin t
     { mutate: (value) => { value.skill.target = '..'; }, pattern: /skill\.target must match/ },
     { mutate: (value) => { value.plugin.target = 'escape\/plugin'; }, pattern: /plugin\.target must match/ },
     { mutate: (value) => { value.plugin.target = 'C:\\escape'; }, pattern: /plugin\.target must match/ },
+  ];
+  for (const fixtureCase of cases) {
+    const sourceRoot = createSourceFixture();
+    const target = createTargetFixture();
+    registerCleanup(context, sourceRoot);
+    registerCleanup(context, target.targetRoot);
+    const manifest = readManifest(sourceRoot);
+    fixtureCase.mutate(manifest);
+    writeManifest(sourceRoot, manifest);
+    assert.throws(
+      () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: target.targetRoot }),
+      fixtureCase.pattern,
+    );
+  }
+});
+
+test('exporter rejects safe but noncanonical synchronization ownership', (context) => {
+  const cases = [
+    {
+      mutate: (value) => { value.skill.target = 'alternate-skill'; },
+      pattern: /target skill must be "ai-team-orchestration"/,
+    },
+    {
+      mutate: (value) => { value.plugin.target = 'alternate-plugin'; },
+      pattern: /target plugin must be "ai-team-orchestration"/,
+    },
+    {
+      mutate: (value) => { value.plugin.managedFields.push('repository'); },
+      pattern: /managed plugin fields must be exactly/,
+    },
   ];
   for (const fixtureCase of cases) {
     const sourceRoot = createSourceFixture();

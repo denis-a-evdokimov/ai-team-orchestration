@@ -28,23 +28,19 @@ import {
   SAFE_GIT_FIXED_COMMANDS,
   SAFE_GIT_GRAMMAR_ROWS,
 } from './git-value-safety.mjs';
+import {
+  assertCanonicalSyncManifest,
+  CANONICAL_AGENT_IDS,
+  CANONICAL_MANAGED_PLUGIN_FIELDS,
+  CANONICAL_PLUGIN_TARGET,
+} from './sync-manifest-contract.mjs';
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // AI_TEAM_VALIDATE_ROOT is a test-only trusted checkout root. Validation never
 // accepts individual paths from repository content or network input.
 const REPO_ROOT = path.resolve(process.env.AI_TEAM_VALIDATE_ROOT || DEFAULT_REPO_ROOT);
-const EXPECTED_AGENT_IDS = [
-  'ai-team-dev',
-  'ai-team-producer',
-  'ai-team-qa',
-];
-const EXPECTED_MANAGED_PLUGIN_FIELDS = [
-  'description',
-  'version',
-  'keywords',
-  'author',
-  'license',
-];
+const EXPECTED_AGENT_IDS = CANONICAL_AGENT_IDS;
+const EXPECTED_MANAGED_PLUGIN_FIELDS = CANONICAL_MANAGED_PLUGIN_FIELDS;
 const DELIVERY_WORKFLOW_PATH = 'skills/ai-team/references/delivery-workflow.md';
 const SKILL_DELIVERY_WORKFLOW_LINK = './references/delivery-workflow.md';
 const REFERENCE_DELIVERY_WORKFLOW_LINK = './delivery-workflow.md';
@@ -1014,7 +1010,7 @@ function validateAgentsAndPublicDocs() {
     }
     const contents = readFileSync(agentPath, 'utf8');
     const section = contractSection(contents, SHARED_DELIVERY_TITLE, agentPath);
-    if (section && !section.includes(DELIVERY_STATE_MACHINE)) {
+    if (section && !unfencedLines(section).some((line) => line.includes(DELIVERY_STATE_MACHINE))) {
       addError(`${repoPath(agentPath)} shared delivery section must contain the canonical state machine.`);
     }
     if (section) {
@@ -1224,47 +1220,24 @@ function validateSyncManifest(plugin, agentIds, skillNames) {
   }
 
   validatePortableStrings(manifest);
-
-  if (!sameArray(Object.keys(manifest).sort(), ['agents', 'plugin', 'skill'])) {
-    addError('sync manifest must contain only agents, skill, and plugin top-level keys.');
-  }
-  if (!sameArray(manifest.agents, EXPECTED_AGENT_IDS)) {
-    addError(`sync manifest agents must be exactly: ${EXPECTED_AGENT_IDS.join(', ')}.`);
+  try {
+    assertCanonicalSyncManifest(manifest);
+  } catch (error) {
+    addError(error.message);
+    return;
   }
   if (!sameArray(agentIds, EXPECTED_AGENT_IDS)) {
     addError('sync manifest agent mappings do not match the standalone agent files.');
   }
-
-  if (!manifest.skill || !sameArray(Object.keys(manifest.skill).sort(), ['source', 'target'])) {
-    addError('sync manifest skill mapping must contain only source and target.');
-  } else {
-    if (manifest.skill.source !== 'ai-team') {
-      addError('sync manifest source skill must remain "ai-team".');
-    }
-    if (manifest.skill.target !== 'ai-team-orchestration') {
-      addError('sync manifest target skill must be "ai-team-orchestration".');
-    }
-    if (!skillNames.includes(manifest.skill.source)) {
-      addError(`sync manifest source skill does not exist: ${manifest.skill.source}`);
-    }
+  if (!skillNames.includes(manifest.skill.source)) {
+    addError(`sync manifest source skill does not exist: ${manifest.skill.source}`);
   }
-
-  if (!manifest.plugin || !sameArray(Object.keys(manifest.plugin).sort(), ['managedFields', 'target'])) {
-    addError('sync manifest plugin mapping must contain only target and managedFields.');
-  } else {
-    if (manifest.plugin.target !== 'ai-team-orchestration') {
-      addError('sync manifest target plugin must be "ai-team-orchestration".');
-    }
-    if (!sameArray(manifest.plugin.managedFields, EXPECTED_MANAGED_PLUGIN_FIELDS)) {
-      addError(`sync manifest managed plugin fields must be exactly: ${EXPECTED_MANAGED_PLUGIN_FIELDS.join(', ')}.`);
-    }
-    if (plugin && plugin.name !== manifest.plugin.target) {
-      addError(`plugin.json name "${plugin.name}" must match sync target plugin "${manifest.plugin.target}".`);
-    }
-    for (const field of EXPECTED_MANAGED_PLUGIN_FIELDS) {
-      if (plugin && !(field in plugin)) {
-        addError(`sync manifest manages plugin.json field "${field}", but the source field is missing.`);
-      }
+  if (plugin && plugin.name !== CANONICAL_PLUGIN_TARGET) {
+    addError(`plugin.json name "${plugin.name}" must match sync target plugin "${CANONICAL_PLUGIN_TARGET}".`);
+  }
+  for (const field of EXPECTED_MANAGED_PLUGIN_FIELDS) {
+    if (plugin && !(field in plugin)) {
+      addError(`sync manifest manages plugin.json field "${field}", but the source field is missing.`);
     }
   }
 }

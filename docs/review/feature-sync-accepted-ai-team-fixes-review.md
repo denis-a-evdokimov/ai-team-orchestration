@@ -287,7 +287,7 @@ The public templates use “Delivery & Review Gates,” “Delivery Checks and G
 3. Commit the canonical candidate on this feature branch; ensure the source worktree is clean and capture the final source commit.
 4. Run `npm run validate`, `npm test`, and the direct plugin smoke test with all three agents and an inherited MCP/extension tool.
 5. Exercise traces A–J above, especially C, D, H, I, and J.
-6. Export only from the clean committed canonical source: `awesome:check` → `awesome:write` → final `awesome:check`.
+6. Export only from the clean committed canonical source: `awesome:check` → `awesome:prepare` → explicitly apply the verified patch → final `awesome:check`.
 7. Update the Awesome-owned marketplace README in the Awesome PR; do not add it to the synchronization manifest.
 8. In Awesome, run dependency install, skill validation, plugin validation, build, line-ending normalization, then skill/plugin validation again.
 9. Rerun canonical `awesome:check`, inspect the complete target diff, and avoid hand-editing generated/publication-owned outputs.

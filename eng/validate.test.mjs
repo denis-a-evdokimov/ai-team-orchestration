@@ -742,6 +742,7 @@ test('validator rejects four-backtick fenced decoys and unterminated fences', (c
       expected: /bounded section sequence|Unterminated fenced block/,
     },
     {
+      name: 'indented fence opener',
       oldText: '## Authority and State',
       newText: '````text\n## Authority and State\n```\n',
       expected: /Unterminated fenced block|Expected exactly one level-2 section/,
@@ -812,20 +813,54 @@ test('validator rejects hidden shared agent lifecycle sections', (context) => {
   }
 });
 
-test('validator rejects CommonMark indentation decoys and comment splicing', (context) => {
+test('validator rejects a visible lifecycle heading with hidden body', (context) => {
+  for (const [name, wrapper] of [
+    ['HTML comment', (body) => `<!--\n${body}\n-->`],
+    ['fenced block', (body) => `\`\`\`\`\`\`text\n${body}\n\`\`\`\`\`\``],
+    ['indented code', (body) => body.split('\n').map((line) => `    ${line}`).join('\n')],
+    ['raw HTML', (body) => `<div>\n${body}\n</div>\n`],
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    for (const agentId of ['ai-team-dev', 'ai-team-producer', 'ai-team-qa']) {
+      const agentPath = path.join(targetRoot, 'agents', `${agentId}.agent.md`);
+      const contents = readFileSync(agentPath, 'utf8');
+      const heading = '## Shared Delivery Lifecycle';
+      const start = contents.indexOf(heading);
+      const bodyStart = contents.indexOf('\n', start) + 1;
+      const end = contents.indexOf('\n## ', bodyStart);
+      assert.notEqual(start, -1);
+      assert.notEqual(end, -1);
+      const body = contents.slice(bodyStart, end).trim();
+      writeFileSync(
+        agentPath,
+        `${contents.slice(0, bodyStart)}${wrapper(body)}${contents.slice(end)}`,
+        'utf8',
+      );
+    }
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1, `${name} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /shared delivery section must contain the canonical state machine/);
+  }
+});
+
+test('validator follows CommonMark indentation and rejects comment splicing', (context) => {
   for (const mutation of [
     {
+      name: 'indented fence opener',
       oldText: '## Authority and State',
       newText: '    ```text\n## Authority and State\n    ```',
-      expected: /bounded section sequence|Expected exactly one level-2 section/,
+      expected: /Validation passed/,
+      shouldPass: true,
     },
     {
+      name: 'three-space heading',
       oldText: '## Authority and State',
       newText: '   ## Authority and State',
       expected: /Validation passed/,
       shouldPass: true,
     },
     {
+      name: 'comment-spliced heading',
       oldText: '## Capability and Trust Protocol',
       newText: '## Capability<!-- preserved\nline break --> and Trust Protocol',
       expected: /bounded section sequence|Expected exactly one level-2 section/,
@@ -839,7 +874,7 @@ test('validator rejects CommonMark indentation decoys and comment splicing', (co
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, mutation.expected);
     } else {
-      assert.equal(result.status, 1);
+      assert.equal(result.status, 1, `${mutation.name} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
       assert.match(result.stderr, /bounded section sequence|Expected exactly one level-2 section|Unterminated fenced block/);
     }
   }
