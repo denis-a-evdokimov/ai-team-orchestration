@@ -523,12 +523,16 @@ function assertTargetBasedOnUpstreamMain(rootInfo) {
 }
 
 function assertNoProcessFilters(rootInfo, label) {
-  const result = runGit(rootInfo.path, ['config', '--local', '--get-regexp', '^filter\..*\.']);
-  const processFilters = result.status === 0
-    ? result.stdout.split(/\r?\n/).filter((line) => /^filter\..*\.(?:clean|smudge|process)\s/i.test(line))
-    : [];
-  if (processFilters.length > 0) {
-    throw new Error(`${label} refuses repository-local process-capable Git filters.`);
+  const result = runGit(rootInfo.path, [
+    'config',
+    '--local',
+    '--includes',
+    '--show-origin',
+    '--get-regexp',
+    String.raw`^filter\..*\.(clean|smudge|process)$`,
+  ]);
+  if (result.status === 0) {
+    throw new Error(`${label} refuses repository-local or included process-capable Git filters.`);
   }
   if (result.status !== 0 && result.status !== 1) {
     throw new Error(`Unable to inspect ${label} Git filters: ${gitErrorText(result)}`);

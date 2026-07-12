@@ -36,75 +36,143 @@ function headingInfo(line) {
   return match ? { level: match[1].length, title: match[2] } : null;
 }
 
+function containerView(line, continuationIndent = 0) {
+  let content = line;
+  let contained = false;
+
+  while (true) {
+    const blockquote = /^ {0,3}>[ \t]?/.exec(content);
+    if (!blockquote) {
+      break;
+    }
+    contained = true;
+    content = content.slice(blockquote[0].length);
+  }
+
+  if (continuationIndent > 0
+    && new RegExp(`^ {${continuationIndent}}`).test(content)) {
+    contained = true;
+    content = content.slice(continuationIndent);
+  }
+
+  let listIndent = 0;
+  while (true) {
+    const listItem = /^ {0,3}(?:[-+*]|\d{1,9}[.)])([ \t]{1,4})/.exec(content);
+    if (!listItem) {
+      break;
+    }
+    contained = true;
+    listIndent += listItem[0].length;
+    content = content.slice(listItem[0].length);
+  }
+
+  return { contained, content, listIndent };
+}
+
+function continuationView(line, state) {
+  return state.contained
+    ? containerView(line, state.continuationIndent)
+    : { contained: false, content: line, listIndent: 0 };
+}
+
 function structuralLines(markdown) {
   const lines = normalizedLines(markdown);
   const result = [];
   let fence = null;
-  let htmlComment = false;
+  let htmlComment = null;
   let rawHtmlTag = null;
-  let rawHtmlUntilBlank = false;
+  let rawHtmlUntilBlank = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     if (fence !== null) {
-      const closing = new RegExp(`^ {0,3}${fence.character}{${fence.length},}[ \\t]*$`).exec(lines[index]);
-      result.push({ kind: 'code-fence', fenced: true, index, line: lines[index] });
+      const view = continuationView(lines[index], fence);
+      const closing = new RegExp(`^ {0,3}${fence.character}{${fence.length},}[ \t]*$`).exec(view.content);
+      result.push({
+        kind: fence.contained ? 'hidden' : 'code-fence',
+        fenced: true,
+        index,
+        line: lines[index],
+      });
       if (closing) {
         fence = null;
       }
       continue;
     }
-    if (htmlComment) {
+    if (htmlComment !== null) {
+      const view = continuationView(lines[index], htmlComment);
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (lines[index].includes('-->')) {
-        htmlComment = false;
+      if (view.content.includes('-->')) {
+        htmlComment = null;
       }
       continue;
     }
     if (rawHtmlTag !== null) {
+      const view = continuationView(lines[index], rawHtmlTag);
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (new RegExp(`</${rawHtmlTag}>`, 'i').test(lines[index])) {
+      if (new RegExp(`</${rawHtmlTag.tag}>`, 'i').test(view.content)) {
         rawHtmlTag = null;
       }
       continue;
     }
-    if (rawHtmlUntilBlank) {
+    if (rawHtmlUntilBlank !== null) {
+      const view = continuationView(lines[index], rawHtmlUntilBlank);
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (lines[index].trim() === '') {
-        rawHtmlUntilBlank = false;
+      if (view.content.trim() === '') {
+        rawHtmlUntilBlank = null;
       }
       continue;
     }
-    if (lines[index].includes('<!--')) {
+    const view = containerView(lines[index]);
+    if (view.content.includes('<!--')) {
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (!lines[index].includes('-->', lines[index].indexOf('<!--') + 4)) {
-        htmlComment = true;
+      if (!view.content.includes('-->', view.content.indexOf('<!--') + 4)) {
+        htmlComment = {
+          contained: view.contained,
+          continuationIndent: view.listIndent,
+        };
       }
       continue;
     }
-    const rawHtml = /^ {0,3}<(script|style|pre|textarea|template)(?:\s|>)/i.exec(lines[index]);
+    const rawHtml = /^ {0,3}<(script|style|pre|textarea|template)(?:\s|>)/i.exec(view.content);
     if (rawHtml) {
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (!new RegExp(`</${rawHtml[1]}>`, 'i').test(lines[index])) {
-        rawHtmlTag = rawHtml[1];
+      if (!new RegExp(`</${rawHtml[1]}>`, 'i').test(view.content)) {
+        rawHtmlTag = {
+          contained: view.contained,
+          continuationIndent: view.listIndent,
+          tag: rawHtml[1],
+        };
       }
       continue;
     }
-    if (/^ {0,3}<(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>)/i.test(lines[index])
-      || /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^>]*)?>\s*$/.test(lines[index])
-      || /^ {0,3}<\?/.test(lines[index])
-      || /^ {0,3}<![A-Z]/.test(lines[index])
-      || /^ {0,3}<!\[CDATA\[/.test(lines[index])) {
+    if (/^ {0,3}<(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>)/i.test(view.content)
+      || /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^>]*)?>\s*$/.test(view.content)
+      || /^ {0,3}<\?/.test(view.content)
+      || /^ {0,3}<![A-Z]/.test(view.content)
+      || /^ {0,3}<!\[CDATA\[/.test(view.content)) {
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      rawHtmlUntilBlank = true;
+      rawHtmlUntilBlank = {
+        contained: view.contained,
+        continuationIndent: view.listIndent,
+      };
       continue;
     }
-    const marker = fenceMarker(lines[index]);
+    const marker = fenceMarker(view.content);
     if (marker) {
-      fence = marker;
-      result.push({ kind: 'code-fence', fenced: true, index, line: lines[index] });
+      fence = {
+        ...marker,
+        contained: view.contained,
+        continuationIndent: view.listIndent,
+      };
+      result.push({
+        kind: view.contained ? 'hidden' : 'code-fence',
+        fenced: true,
+        index,
+        line: lines[index],
+      });
       continue;
     }
-    const indented = /^(?: {4}|\t)/.test(lines[index]);
+    const indented = /^(?: {4}|\t)/.test(view.content);
     result.push({
       kind: indented ? 'indented-code' : 'visible',
       fenced: indented,
@@ -116,11 +184,11 @@ function structuralLines(markdown) {
   if (fence !== null) {
     throw new Error('Unterminated fenced block.');
   }
-  if (htmlComment) {
+  if (htmlComment !== null) {
     throw new Error('Unterminated HTML comment.');
   }
   if (rawHtmlTag !== null) {
-    throw new Error(`Unterminated raw HTML block <${rawHtmlTag}>.`);
+    throw new Error(`Unterminated raw HTML block <${rawHtmlTag.tag}>.`);
   }
 
   return { lines, structural: result };

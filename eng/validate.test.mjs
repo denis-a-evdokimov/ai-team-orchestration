@@ -1002,6 +1002,77 @@ test('validator rejects hidden safety clauses and contradictory freeze selection
   }
 });
 
+test('validator rejects critical clauses hidden in CommonMark container fences', (context) => {
+  const wrappers = [
+    ['blockquote', (text) => `> \`\`\`text\n> ${text}\n> \`\`\``],
+    ['nested blockquote', (text) => `> > \`\`\`text\n> > ${text}\n> > \`\`\``],
+    ['list item', (text) => `- \`\`\`text\n  ${text}\n  \`\`\``],
+  ];
+  const cases = [
+    {
+      relativePath: ['agents', 'ai-team-dev.agent.md'],
+      anchor: '## Capability Protocol',
+      text: 'capture the full tested local commit ID before pushing',
+      expected: /Dev protocol must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-qa.agent.md'],
+      anchor: '## Communication Style',
+      text: 'Report findings and evidence to Producer only',
+      expected: /QA protocol must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-producer.agent.md'],
+      anchor: '## Capability Protocol',
+      text: 'Capability is not authority.',
+      expected: /capability section must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
+      anchor: 'Use a regular merge.',
+      text: 'no unresolved blocker or major finding remains;',
+      expected: /merge\/status section must contain/,
+    },
+  ];
+
+  for (const [wrapperName, wrapper] of wrappers) {
+    for (const fixtureCase of cases) {
+      const targetRoot = createRepositoryCopy(context);
+      const filePath = path.join(targetRoot, ...fixtureCase.relativePath);
+      mutateText(filePath, fixtureCase.text, '[hidden policy clause]');
+      mutateText(
+        filePath,
+        fixtureCase.anchor,
+        `${wrapper(fixtureCase.text)}\n\n${fixtureCase.anchor}`,
+      );
+      const result = runValidator(targetRoot);
+      assert.equal(
+        result.status,
+        1,
+        `${wrapperName} unexpectedly passed for ${fixtureCase.relativePath.join('/')}:\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.match(result.stderr, fixtureCase.expected);
+    }
+  }
+});
+
+test('validator rejects lifecycle contracts hidden in CommonMark container fences', (context) => {
+  const wrappers = [
+    ['blockquote', (text) => `> \`\`\`text\n> ${text}\n> \`\`\``],
+    ['nested blockquote', (text) => `> > \`\`\`text\n> > ${text}\n> > \`\`\``],
+    ['list item', (text) => `- \`\`\`text\n  ${text}\n  \`\`\``],
+  ];
+  const stateMachine = '**Plan → Implement and Dev-check → Freeze candidate → Selected gates → Fix/re-freeze loop → Producer/CEO merge decision → regular merge → Selected post-merge checks → Authoritative status update**';
+  for (const [wrapperName, wrapper] of wrappers) {
+    const targetRoot = createRepositoryCopy(context);
+    const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
+    mutateText(workflowPath, stateMachine, wrapper(stateMachine));
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1, `${wrapperName} preamble unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /preamble must contain the canonical state machine/);
+  }
+});
+
 test('validator rejects stale-evidence freeze and capability contradictions', (context) => {
   for (const mutation of [
     {

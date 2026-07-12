@@ -669,8 +669,46 @@ test('repository-local process-capable Git filters are rejected before inspectio
   runGit(fixture.targetRoot, 'config', 'filter.danger.clean', 'echo dangerous');
   assert.throws(
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: fixture.targetRoot }),
-    /refuses repository-local process-capable Git filters/,
+    /refuses repository-local or included process-capable Git filters/,
   );
+});
+
+test('included local process filters are rejected before they execute', (context) => {
+  for (const side of ['source', 'target']) {
+    const sourceRoot = createSourceFixture();
+    const fixture = createTargetFixture();
+    const configRoot = mkdtempSync(path.join(tmpdir(), `ai-team-included-filter-${side}-`));
+    registerCleanup(context, sourceRoot);
+    registerCleanup(context, fixture.targetRoot);
+    registerCleanup(context, configRoot);
+
+    const sentinel = path.join(configRoot, 'filter-ran.txt');
+    const includedConfig = path.join(configRoot, 'included.gitconfig');
+    const filterCommand = process.platform === 'win32'
+      ? `cmd /d /c echo ran>${sentinel.replace(/\\/g, '/')}`
+      : `sh -c 'echo ran > ${sentinel}'`;
+    writeFileSync(
+      includedConfig,
+      `[filter "danger"]\n\tclean = ${filterCommand}\n\tsmudge = ${filterCommand}\n`,
+    );
+    const repositoryRoot = side === 'source' ? sourceRoot : fixture.targetRoot;
+    writeFileSync(path.join(repositoryRoot, '.gitattributes'), '* filter=danger\n');
+    commitAll(repositoryRoot, 'configure included filter attributes');
+    if (side === 'target') {
+      setUpstreamMain(repositoryRoot);
+    }
+    runGit(repositoryRoot, 'config', '--local', 'include.path', includedConfig.replace(/\\/g, '/'));
+
+    assert.throws(
+      () => syncAwesomeCopilot({
+        logger: QUIET,
+        sourceRoot,
+        targetRoot: fixture.targetRoot,
+      }),
+      /refuses repository-local or included process-capable Git filters/,
+    );
+    assert.equal(existsSync(sentinel), false);
+  }
 });
 
 test('manifest rejects duplicate and traversal-like agents, skills, and plugin targets', (context) => {
