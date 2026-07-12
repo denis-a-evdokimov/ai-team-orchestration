@@ -93,5 +93,5 @@ Publish a trustworthy VS Code agent plugin that coordinates Producer, Dev, and o
 
 | Date | Change | Verdict | Blockers | Notable |
 |------|--------|---------|----------|---------|
-| 2026-07-12 | `feature/sync-accepted-ai-team-fixes` candidate hardening | Pending final review | 0 | Pre-push candidate binding, visible contracts, canonical manifest authority, real-path output containment, and pinned target snapshot |
+| 2026-07-12 | `feature/sync-accepted-ai-team-fixes` final candidate | PASS | 0 | 98 tests in both modes; candidate binding, included-config filter defense, CommonMark containers, manifest authority, output containment, and target snapshot verified |
 | 2026-07-11 | `feature/sync-accepted-ai-team-fixes` plus working tree | CHANGES-REQUESTED | 0 | Post-freeze reopen artifact, candidate binding, QA routing, quick-start order, fork setup, shell/trust boundaries, validator escapes/false-greens, and stale Awesome marketplace docs |
