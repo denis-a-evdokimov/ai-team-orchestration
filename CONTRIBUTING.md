@@ -21,7 +21,7 @@ npm run validate
 npm test
 ```
 
-The validator checks standalone plugin metadata, the constrained frontmatter fields this repository relies on, relative Markdown links, stable IDs, legacy references, and synchronization configuration. It deliberately does not claim full YAML validation; Awesome Copilot's validators remain authoritative downstream. Tests exercise the exporter entirely in temporary repositories. `AI_TEAM_VALIDATE_ROOT` exists solely for those isolated validator fixtures; normal validation leaves it unset.
+The validator checks standalone plugin metadata, the constrained frontmatter fields this repository relies on, relative Markdown links, stable IDs, legacy references, and synchronization configuration. It deliberately does not claim full YAML validation; Awesome Copilot's validators remain authoritative downstream. Tests execute copied validators and exporters entirely inside temporary repository fixtures.
 
 ## Direct plugin smoke test
 

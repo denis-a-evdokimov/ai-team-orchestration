@@ -36,6 +36,43 @@ function headingInfo(line) {
   return match ? { level: match[1].length, title: match[2] } : null;
 }
 
+function startsWithSpaces(line, count) {
+  if (!Number.isSafeInteger(count) || count < 0 || count > line.length) {
+    return false;
+  }
+  for (let index = 0; index < count; index += 1) {
+    if (line[index] !== ' ') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isClosingFence(line, character, minimumLength) {
+  let index = 0;
+  while (index < 3 && line[index] === ' ') {
+    index += 1;
+  }
+  let markerLength = 0;
+  while (line[index] === character) {
+    markerLength += 1;
+    index += 1;
+  }
+  if (markerLength < minimumLength) {
+    return false;
+  }
+  for (; index < line.length; index += 1) {
+    if (line[index] !== ' ' && line[index] !== '\t') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function containsClosingTag(line, tag) {
+  return line.toLowerCase().includes(`</${tag.toLowerCase()}>`);
+}
+
 function containerView(line, continuationIndent = 0) {
   let content = line;
   let contained = false;
@@ -49,8 +86,7 @@ function containerView(line, continuationIndent = 0) {
     content = content.slice(blockquote[0].length);
   }
 
-  if (continuationIndent > 0
-    && new RegExp(`^ {${continuationIndent}}`).test(content)) {
+  if (continuationIndent > 0 && startsWithSpaces(content, continuationIndent)) {
     contained = true;
     content = content.slice(continuationIndent);
   }
@@ -89,7 +125,7 @@ function structuralLines(markdown) {
   for (let index = 0; index < lines.length; index += 1) {
     if (fence !== null) {
       const view = continuationView(lines[index], fence);
-      const closing = new RegExp(`^ {0,3}${fence.character}{${fence.length},}[ \t]*$`).exec(view.content);
+      const closing = isClosingFence(view.content, fence.character, fence.length);
       result.push({
         kind: fence.contained ? 'hidden' : 'code-fence',
         fenced: true,
@@ -112,7 +148,7 @@ function structuralLines(markdown) {
     if (rawHtmlTag !== null) {
       const view = continuationView(lines[index], rawHtmlTag);
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (new RegExp(`</${rawHtmlTag.tag}>`, 'i').test(view.content)) {
+      if (containsClosingTag(view.content, rawHtmlTag.tag)) {
         rawHtmlTag = null;
       }
       continue;
@@ -139,7 +175,7 @@ function structuralLines(markdown) {
     const rawHtml = /^ {0,3}<(script|style|pre|textarea|template)(?:\s|>)/i.exec(view.content);
     if (rawHtml) {
       result.push({ kind: 'hidden', fenced: true, index, line: lines[index] });
-      if (!new RegExp(`</${rawHtml[1]}>`, 'i').test(view.content)) {
+      if (!containsClosingTag(view.content, rawHtml[1])) {
         rawHtmlTag = {
           contained: view.contained,
           continuationIndent: view.listIndent,
@@ -251,7 +287,7 @@ export function fencedBlocks(markdown, language = null) {
     if (entry.kind !== 'code-fence') {
       throw new Error('Fenced block structure changed unexpectedly.');
     }
-    const closing = new RegExp(`^ {0,3}${current.marker}{${current.length},}[ \\t]*$`).exec(line);
+    const closing = isClosingFence(line, current.marker, current.length);
     if (closing) {
       blocks.push(current);
       current = null;

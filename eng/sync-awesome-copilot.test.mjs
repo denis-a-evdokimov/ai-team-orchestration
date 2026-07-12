@@ -445,6 +445,12 @@ test('symbolic upstream ref and nonempty grafts cannot spoof ancestry', (context
     () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: grafted.targetRoot }),
     /refuses nonempty Git grafts/,
   );
+
+  writeFileSync(graftsPath, '   \n');
+  assert.throws(
+    () => syncAwesomeCopilot({ logger: QUIET, sourceRoot, targetRoot: grafted.targetRoot }),
+    /refuses nonempty Git grafts/,
+  );
 });
 
 test('linked-worktree common grafts cannot spoof ancestry', (context) => {

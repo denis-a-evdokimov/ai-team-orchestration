@@ -482,7 +482,7 @@ function assertTargetBasedOnUpstreamMain(rootInfo) {
     if (!graftsStat.isFile() || graftsStat.isSymbolicLink() || graftsStat.nlink !== 1) {
       throw new Error('Awesome Copilot target refuses linked or non-regular Git graft files.');
     }
-    if (readFileSync(graftsPath, 'utf8').trim() !== '') {
+    if (graftsStat.size !== 0) {
       throw new Error('Awesome Copilot target refuses nonempty Git grafts.');
     }
   }

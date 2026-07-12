@@ -16,7 +16,6 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VALIDATOR_PATH = path.join(REPO_ROOT, 'eng', 'validate.mjs');
 
 function createRepositoryCopy(context) {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-validate-'));
@@ -29,12 +28,12 @@ function createRepositoryCopy(context) {
 }
 
 function runValidator(targetRoot) {
-  return spawnSync(process.execPath, [VALIDATOR_PATH], {
+  const environment = { ...process.env };
+  delete environment.AI_TEAM_VALIDATE_ROOT;
+  return spawnSync(process.execPath, [path.join(targetRoot, 'eng', 'validate.mjs')], {
+    cwd: targetRoot,
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      AI_TEAM_VALIDATE_ROOT: targetRoot,
-    },
+    env: environment,
   });
 }
 
@@ -51,7 +50,7 @@ function replaceFrontmatterField(filePath, field, value) {
   writeFileSync(filePath, contents.replace(pattern, `${field}: '${value}'`), 'utf8');
 }
 
-test('validation root override accepts an unmodified temporary repository copy', (context) => {
+test('validator executes from an unmodified temporary repository copy', (context) => {
   const targetRoot = createRepositoryCopy(context);
   const result = runValidator(targetRoot);
   assert.equal(result.status, 0, result.stderr);

@@ -36,9 +36,7 @@ import {
 } from './sync-manifest-contract.mjs';
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// AI_TEAM_VALIDATE_ROOT is a test-only trusted checkout root. Validation never
-// accepts individual paths from repository content or network input.
-const REPO_ROOT = path.resolve(process.env.AI_TEAM_VALIDATE_ROOT || DEFAULT_REPO_ROOT);
+const REPO_ROOT = DEFAULT_REPO_ROOT;
 const EXPECTED_AGENT_IDS = CANONICAL_AGENT_IDS;
 const EXPECTED_MANAGED_PLUGIN_FIELDS = CANONICAL_MANAGED_PLUGIN_FIELDS;
 const DELIVERY_WORKFLOW_PATH = 'skills/ai-team/references/delivery-workflow.md';
@@ -140,6 +138,18 @@ function repoPath(filePath) {
 
 function addError(message) {
   errors.push(message);
+}
+
+function readRequiredText(filePath, label) {
+  try {
+    return readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (['EACCES', 'EISDIR', 'ENOENT', 'EPERM'].includes(error.code)) {
+      addError(`${label} is required and must be a readable regular file.`);
+      return null;
+    }
+    throw error;
+  }
 }
 
 function readJson(filePath, label) {
@@ -580,11 +590,10 @@ function requireText(contents, required, filePath, label) {
 }
 
 function validateCanonicalDelivery(deliveryPath) {
-  if (!existsSync(deliveryPath) || !statSync(deliveryPath).isFile()) {
-    addError(`${DELIVERY_WORKFLOW_PATH} is required.`);
+  const contents = readRequiredText(deliveryPath, DELIVERY_WORKFLOW_PATH);
+  if (contents === null) {
     return;
   }
-  const contents = readFileSync(deliveryPath, 'utf8');
   if (!documentPreamble(contents).includes(DELIVERY_STATE_MACHINE)) {
     addError(`${DELIVERY_WORKFLOW_PATH} preamble must contain the canonical state machine.`);
   }
@@ -770,11 +779,10 @@ function validateCanonicalDelivery(deliveryPath) {
 }
 
 function validateSafeGitContract(safeGitPath) {
-  if (!existsSync(safeGitPath) || !statSync(safeGitPath).isFile()) {
-    addError(`${SAFE_GIT_PATH} is required.`);
+  const contents = readRequiredText(safeGitPath, SAFE_GIT_PATH);
+  if (contents === null) {
     return;
   }
-  const contents = readFileSync(safeGitPath, 'utf8');
   const expectedHeadings = ['Safe Baseline Grammar', 'Trust and Confirmation', 'Fixed Git Sequence'];
   if (!sameArray(sectionHeadings(contents), expectedHeadings)) {
     addError(`${SAFE_GIT_PATH} must contain the canonical bounded section sequence.`);
