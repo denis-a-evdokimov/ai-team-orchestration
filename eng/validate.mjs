@@ -78,6 +78,7 @@ const DELIVERY_GATE_ROWS = [
   'Final approval',
   'Freeze detection',
 ];
+const ATOMIC_FREEZE_SELECTION = '[atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent]';
 const HIGH_RISK_TERMS = [
   'authentication/authorization/identity',
   'secrets or EUII/privacy',
@@ -734,6 +735,7 @@ function validateCanonicalDelivery(deliveryPath) {
       ['Candidate ID', 'full tested local Git commit object ID captured before push and confirmed equal to the application PR head after push'],
       ['Prior evidence after a replacement candidate', 'stale by default; affected gates rerun; only that gate owner may carry forward after reviewing the delta'],
       ['Unexpected candidate movement after current evidence', 'Hold; merge decision reopens until head, ledger, checks, gates, and approvals are current'],
+      ['Merge frozen application candidate', 'atomic expected-head guard equal to Candidate ID, or protected merge queue that revalidates candidate-bound evidence'],
       ['Destructive/privileged/credential-bearing/new external destination mutation', 'explicit user confirmation'],
       ['Reduce project gate baseline or skip high-risk treatment', 'CEO/maintainer explicit risk acceptance'],
       ['Reopen frozen application branch', 'Producer Branch Reopen Packet only'],
@@ -755,6 +757,8 @@ function validateCanonicalDelivery(deliveryPath) {
       'Evidence Archive is optional',
       'no unresolved blocker or major finding remains',
       'the candidate remained frozen after the last current evidence.',
+      'merge operation itself atomically require the application head to equal the Delivery Ledger Candidate ID',
+      'A separate comparison immediately before an unguarded merge is insufficient.',
     ], deliveryPath, 'merge/status section');
   }
   if (packets) {
@@ -765,7 +769,7 @@ function validateCanonicalDelivery(deliveryPath) {
     }
     const packetFields = new Map([
       ['Candidate Packet — Dev', ['Candidate ID', 'Observed application PR head', 'Dev checks', 'Next owner']],
-      ['Delivery Ledger — Producer', ['State', 'Candidate ID', 'Current application head', 'Reopen count / budget', 'Next owner / action']],
+      ['Delivery Ledger — Producer', ['State', 'Candidate ID', 'Current application head', 'Reopen count / budget', 'Atomic merge guard', 'Next owner / action']],
       ['Branch Reopen Packet — Producer', ['Prior Candidate ID', 'Blocking evidence', 'Permitted delta', 'Gates to rerun', 'Next owner']],
       ['Carry-Forward Packet — Gate Owner', ['Old / new Candidate IDs', 'Prior evidence', 'Reviewed delta', 'Decision', 'Owner']],
     ]);
@@ -822,6 +826,11 @@ function validateSafeGitContract(safeGitPath) {
     if (!sameArray(commandLines, SAFE_GIT_FIXED_COMMANDS)) {
       addError(`${SAFE_GIT_PATH} fixed command sequence must exactly match the executable command contract.`);
     }
+    requireText(commands, [
+      'once for each **distinct missing remote name-to-URL mapping**',
+      'If `BASE_REMOTE` equals `PUSH_REMOTE`',
+      'the command runs at most once for that shared remote',
+    ], safeGitPath, 'remote creation contract');
     const proseCommands = unfencedLines(commands)
       .map((line) => line.trim())
       .filter((line) => /^(?:git|gh|az|npm|node|pwsh|powershell|cmd)\b/i.test(line));
@@ -928,7 +937,7 @@ function validateSprintTemplate(sprintPlanPath) {
       addError(`${repoPath(sprintPlanPath)} Final approval selection must be "Producer / CEO / both".`);
     }
     const freezeSelection = gateTable?.rowsByName.get('Freeze detection')?.[1] ?? '';
-    if (freezeSelection !== '[branch protection / stale-check dismissal / PR marker plus head comparison / other]') {
+    if (freezeSelection !== ATOMIC_FREEZE_SELECTION) {
       addError(`${repoPath(sprintPlanPath)} Freeze detection must use the canonical enforceable-mechanism template.`);
     }
     if (!contractSection(planTemplate, 'Baseline Override (Only When Needed)', sprintPlanPath)) {
@@ -1008,7 +1017,17 @@ function validateProjectBrief(projectBriefPath) {
   }
   if (section15) {
     requireText(section15, HIGH_RISK_TERMS, projectBriefPath, 'high-risk policy');
-    requireText(section15, ['Only a live Producer Branch Reopen Packet', 'Candidate ID is always the full Git commit object ID', 'mandatory authoritative Sections 7 and 8 update', 'Evidence archive is optional'], projectBriefPath, 'delivery policy');
+    requireText(section15, [
+      'Only a live Producer Branch Reopen Packet',
+      'Candidate ID is always the full Git commit object ID',
+      'merge action atomically requires that Candidate ID as its expected head',
+      'A separate head comparison followed by an unguarded merge is insufficient.',
+      'mandatory authoritative Sections 7 and 8 update',
+      'Evidence archive is optional',
+    ], projectBriefPath, 'delivery policy');
+    if (gateTable?.rowsByName.get('Freeze detection')?.[1] !== ATOMIC_FREEZE_SELECTION) {
+      addError(`${repoPath(projectBriefPath)} Freeze detection must use the canonical atomic merge template.`);
+    }
   }
 }
 
@@ -1050,7 +1069,15 @@ function validateAgentsAndPublicDocs() {
   const devPath = path.join(REPO_ROOT, 'agents', 'ai-team-dev.agent.md');
   const qaPath = path.join(REPO_ROOT, 'agents', 'ai-team-qa.agent.md');
   if (existsSync(producerPath)) {
-    requireText(readFileSync(producerPath, 'utf8'), ['Delivery Ledger', 'Producer-authored Branch Reopen Packet', 'at least one concrete check', 'full tested local commit ID captured before push', 'matching observed application PR head'], producerPath, 'Producer protocol');
+    requireText(readFileSync(producerPath, 'utf8'), [
+      'Delivery Ledger',
+      'Producer-authored Branch Reopen Packet',
+      'at least one concrete check',
+      'full tested local commit ID captured before push',
+      'matching observed application PR head',
+      'merge operation itself must atomically require the application head to equal that Candidate ID',
+      'never fall back to check-then-merge',
+    ], producerPath, 'Producer protocol');
   }
   if (existsSync(devPath)) {
     requireText(readFileSync(devPath, 'utf8'), [
@@ -1100,6 +1127,10 @@ function validateAgentsAndPublicDocs() {
     if (architecture) {
       requireText(architecture, ['<working-branch>', 'frozen', 'candidate', 'immutable preview'], skillPath, 'chat architecture');
     }
+    requireText(skill, [
+      'atomic expected-head merge guard',
+      'a separate check followed by an unguarded merge is not sufficient',
+    ], skillPath, 'delivery summary');
     for (const stale of ['feature/sprint-N', 'PR head / preview']) {
       if (skill.includes(stale)) {
         addError(`${repoPath(skillPath)} contains stale topology text "${stale}".`);

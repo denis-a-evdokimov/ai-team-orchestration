@@ -22,6 +22,13 @@ const VALID_PLAN = {
 
 test('safe Git plan coordinates accept normal and fork workflows', () => {
   assert.equal(validateGitPlanCoordinates(VALID_PLAN), true);
+  assert.equal(validateGitPlanCoordinates({
+    ...VALID_PLAN,
+    baseRemote: 'origin',
+    baseRemoteUrl: 'https://github.com/example/project.git',
+    baseRef: 'refs/remotes/origin/main',
+    pushRemoteUrl: 'https://github.com/example/project.git',
+  }), true);
   assert.equal(expectedBaseRef('origin', 'release/2.0'), 'refs/remotes/origin/release/2.0');
   assert.equal(validateRemoteUrl('ssh://git@example.com:2222/org/repo.git'), 'ssh://git@example.com:2222/org/repo.git');
 });

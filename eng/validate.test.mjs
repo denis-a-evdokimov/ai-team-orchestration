@@ -620,7 +620,7 @@ test('validator rejects wrong gate owners and disabled freeze detection', (conte
       expected: /gate "Independent review" must be owned by "Producer \/ non-author reviewer"/,
     },
     {
-      oldText: '| Freeze detection | [branch protection / stale-check dismissal / PR marker plus head comparison / other] | Producer |',
+      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
       newText: '| Freeze detection | none | Dev |',
       expected: /gate "Freeze detection" must be owned by "Producer"|Freeze detection must define an enforceable mechanism/,
     },
@@ -649,6 +649,10 @@ test('safe Git fixed forms are unquoted for PowerShell POSIX and Command Prompt 
   const safeGit = readFileSync(safeGitPath, 'utf8');
   assert.match(safeGit, /same fixed forms work in PowerShell, POSIX shells, and Windows Command Prompt/);
   assert.match(safeGit, /git remote get-url --all BASE_REMOTE/);
+  assert.match(safeGit, /git remote add -- REMOTE_NAME REMOTE_URL/);
+  assert.equal((safeGit.match(/git remote add --/g) ?? []).length, 1);
+  assert.match(safeGit, /once for each \*\*distinct missing remote name-to-URL mapping\*\*/);
+  assert.match(safeGit, /command runs at most once for that shared remote/);
   assert.match(safeGit, /git rev-parse --verify --end-of-options refs\/heads\/WORKING_BRANCH/);
   assert.match(safeGit, /git push --set-upstream PUSH_REMOTE refs\/heads\/WORKING_BRANCH:refs\/heads\/WORKING_BRANCH/);
   assert.doesNotMatch(safeGit, /git (?:remote|fetch|switch|push)[^\n]*'BASE_REMOTE'/);
@@ -672,6 +676,48 @@ test('validator rejects extra destructive commands and documented grammar drift'
     const targetRoot = createRepositoryCopy(context);
     const safeGitPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'safe-git-values.md');
     mutateText(safeGitPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, mutation.expected);
+  }
+});
+
+test('validator rejects duplicate shared-remote setup and non-atomic merge authorization', (context) => {
+  for (const mutation of [
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'safe-git-values.md'],
+      oldText: 'git remote add -- REMOTE_NAME REMOTE_URL',
+      newText: 'git remote add -- BASE_REMOTE BASE_URL\ngit remote add -- PUSH_REMOTE PUSH_URL',
+      expected: /fixed command sequence must exactly match/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
+      oldText: 'Use a regular merge, but make the merge operation itself atomically require the application head to equal the Delivery Ledger Candidate ID.',
+      newText: 'Compare the current head, then use a regular merge without an expected-head condition.',
+      expected: /merge\/status section must contain/,
+    },
+    {
+      relativePath: ['agents', 'ai-team-producer.agent.md'],
+      oldText: 'The merge operation itself must atomically require the application head to equal that Candidate ID',
+      newText: 'Compare the application head before invoking an unguarded merge',
+      expected: /Producer protocol must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'project-brief-template.md'],
+      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
+      newText: '| Freeze detection | PR marker plus separate head comparison | Producer |',
+      expected: /Freeze detection must use the canonical atomic merge template/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'SKILL.md'],
+      oldText: 'atomic expected-head merge guard',
+      newText: 'ordinary merge after a head comparison',
+      expected: /delivery summary must contain/,
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const filePath = path.join(targetRoot, ...mutation.relativePath);
+    mutateText(filePath, mutation.oldText, mutation.newText);
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
     assert.match(result.stderr, mutation.expected);
@@ -987,7 +1033,7 @@ test('validator rejects hidden safety clauses and contradictory freeze selection
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'sprint-plan-template.md'],
-      oldText: '| Freeze detection | [branch protection / stale-check dismissal / PR marker plus head comparison / other] | Producer |',
+      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
       newText: '| Freeze detection | no branch protection; freeze checks disabled | Producer |',
       expected: /Freeze detection must use the canonical enforceable-mechanism template/,
     },
@@ -1028,7 +1074,7 @@ test('validator rejects critical clauses hidden in CommonMark container fences',
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
-      anchor: 'Use a regular merge.',
+      anchor: 'Use a regular merge, but make the merge operation itself atomically require the application head to equal the Delivery Ledger Candidate ID.',
       text: 'no unresolved blocker or major finding remains;',
       expected: /merge\/status section must contain/,
     },
