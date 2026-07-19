@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 function runGit(cwd, args, env = process.env) {
   return spawnSync('git', args, {
@@ -53,6 +54,7 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
 
   const seed = path.join(root, 'seed');
   const remote = path.join(root, 'remote.git');
+  const remoteUrl = pathToFileURL(remote).href;
   const clone = path.join(root, 'clone');
   createCommittedRepository(seed);
   writeFileSync(path.join(seed, '.gitattributes'), '*.txt filter=unexpected\n', 'utf8');
@@ -73,6 +75,7 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
     GIT_CONFIG_GLOBAL: globalConfig,
   };
   requireGit(root, ['config', '--global', 'core.hooksPath', globalHooks], isolatedEnvironment);
+  requireGit(root, ['config', '--global', 'protocol.version', '0'], isolatedEnvironment);
   requireGit(
     root,
     [
@@ -133,7 +136,7 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
     'upstream',
     '--upload-pack=git-upload-pack',
     '--',
-    remote,
+    remoteUrl,
     clone,
   ], isolatedEnvironment);
   assert.equal(existsSync(cloneHookMarker), false);
@@ -173,9 +176,14 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
   assert.equal(existsSync(filterMarker), false);
 
   const refs = requireGit(clone, ['show-ref']).stdout.trim().split(/\r?\n/);
-  assert.equal(refs.length, 2);
+  assert.equal(refs.length, 3);
   const refEntries = new Map(refs.map((line) => line.split(' ')).map(([oid, ref]) => [ref, oid]));
   assert.equal(refEntries.get('refs/heads/main'), refEntries.get('refs/remotes/upstream/main'));
+  assert.equal(refEntries.get('refs/remotes/upstream/HEAD'), refEntries.get('refs/heads/main'));
+  assert.equal(
+    requireGit(clone, ['symbolic-ref', '--quiet', 'refs/remotes/upstream/HEAD']).stdout.trim(),
+    'refs/remotes/upstream/main',
+  );
 
   const fsmonitorMarker = path.join(root, 'fsmonitor-ran');
   installHook(root, 'fsmonitor-hook', fsmonitorMarker);
@@ -305,6 +313,10 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
   requireGit(clone, [
     '-c',
     'core.hooksPath=.git/disabled-hooks',
+    '-c',
+    'core.sparseCheckout=false',
+    '-c',
+    'core.sparseCheckoutCone=false',
     'switch',
     '--create',
     'feature/safe',
@@ -355,4 +367,72 @@ test('fixed Safe Git commands resist configuration-driven scope expansion', (con
     runGit(remote, ['--git-dir=.', 'show-ref', '--verify', '--quiet', 'refs/tags/unexpected-tag']).status,
     1,
   );
+});
+
+test('fixed branch switches disable sparse checkout on changed trees', (context) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ai-team-safe-switch-'));
+  context.after(() => rmSync(root, { force: true, recursive: true }));
+
+  createCommittedRepository(root);
+  mkdirSync(path.join(root, 'keep'));
+  mkdirSync(path.join(root, 'hide'));
+  writeFileSync(path.join(root, 'keep', 'visible.txt'), 'visible\n', 'utf8');
+  writeFileSync(path.join(root, 'hide', 'existing.txt'), 'existing\n', 'utf8');
+  requireGit(root, ['add', '.']);
+  requireGit(root, ['commit', '-m', 'tree']);
+  requireGit(root, ['switch', '--create', 'base']);
+  writeFileSync(path.join(root, 'hide', 'new.txt'), 'new\n', 'utf8');
+  requireGit(root, ['add', '.']);
+  requireGit(root, ['commit', '-m', 'advance base']);
+  requireGit(root, ['switch', 'main']);
+
+  writeFileSync(path.join(root, '.git', 'info', 'sparse-checkout'), '/keep/\n', 'utf8');
+  requireGit(root, ['config', 'core.sparseCheckout', 'true']);
+  requireGit(root, ['config', 'core.sparseCheckoutCone', 'false']);
+
+  requireGit(root, [
+    '-c',
+    'core.hooksPath=.git/disabled-hooks',
+    '-c',
+    'core.sparseCheckout=false',
+    '-c',
+    'core.sparseCheckoutCone=false',
+    'switch',
+    '--no-track',
+    '--create',
+    'working',
+    '--',
+    'refs/heads/base',
+  ]);
+  assert.equal(existsSync(path.join(root, 'hide', 'new.txt')), true);
+  for (const line of requireGit(root, ['ls-files', '-v']).stdout.trim().split(/\r?\n/)) {
+    assert.match(line, /^H /);
+  }
+
+  requireGit(root, [
+    '-c',
+    'core.hooksPath=.git/disabled-hooks',
+    '-c',
+    'core.sparseCheckout=false',
+    '-c',
+    'core.sparseCheckoutCone=false',
+    'switch',
+    '--',
+    'main',
+  ]);
+  requireGit(root, [
+    '-c',
+    'core.hooksPath=.git/disabled-hooks',
+    '-c',
+    'core.sparseCheckout=false',
+    '-c',
+    'core.sparseCheckoutCone=false',
+    'switch',
+    '--',
+    'working',
+  ]);
+  assert.equal(existsSync(path.join(root, 'hide', 'new.txt')), true);
+  for (const line of requireGit(root, ['ls-files', '-v']).stdout.trim().split(/\r?\n/)) {
+    assert.match(line, /^H /);
+  }
 });

@@ -831,7 +831,8 @@ function validateSafeGitContract(safeGitPath) {
     }
     requireText(commands, [
       'treat every URL-producing command as sensitive',
-      'exactly two refs with the same full object ID',
+      'either two refs or one permitted third ref',
+      'symbolic `refs/remotes/BASE_REMOTE/HEAD`',
       'every `git ls-files -v` line beginning with `H `',
       '`.git/disabled-hooks`',
       '* -text -filter -diff -ident -working-tree-encoding',
