@@ -45,21 +45,16 @@ The human (CEO) is the message bus between parallel chats:
 │ Nova     │ │ Ivy      │ │        │
 │ Sage     │ │          │ │        │
 │ Milo     │ │          │ │        │
-│          │ │frozen   /│ │planned │
+│          │ │frozen  / │ │planned │
 │ <working-│ │candidate/│ │branch  │
-│ branch>  │ │immutable│ └────────┘
-│          │ │preview  │
-└──────────┘
+│ branch>  │ │immutable │ └────────┘
+│          │ │preview   │
+└──────────┘ └──────────┘
 ```
 
 Dev works on the plan's `<working-branch>`. QA normally evaluates the frozen Candidate ID or its immutable preview and creates a separate branch only for test/evidence commits.
 
-Each concurrent session works in a **separate VS Code window** with its own clone. Only roles that write files need their own branch; QA normally checks out the frozen candidate unless it creates test/evidence commits:
-```bash
-git clone <repo> project-dev    # Dev team
-git clone <repo> project-qa     # QA
-git clone <repo> project-devops # DevOps (only when needed)
-```
+Each concurrent session works in a **separate VS Code window** with its own clone. Only roles that write files need their own branch; QA normally checks out the frozen candidate unless it creates test/evidence commits. Record a distinct safe clone destination such as `project-dev`, `project-qa`, or `project-devops`, then use the validated fixed clone sequence in [Safe Git Values and Commands](./references/safe-git-values.md). Never interpolate an unvalidated repository URL or destination into a clone command.
 
 ## Project Bootstrap
 
@@ -101,7 +96,7 @@ The [Delivery Workflow](./references/delivery-workflow.md) is canonical:
 
 **Plan → Implement and Dev-check → Freeze candidate → Selected gates → Fix/re-freeze loop → Producer/CEO merge decision → regular merge → Selected post-merge checks → Authoritative status update**
 
-The CEO/maintainer sets acceptable risk; the Producer records proportionate checks and gates before implementation. Every code/config candidate has at least one concrete check. High-risk surfaces receive applicable security-focused evidence unless the CEO/maintainer explicitly accepts the risk. Dev captures the tested commit ID before push, freezes the application branch at push, and posts a Candidate Packet only after the observed PR head matches. The Producer owns a live Delivery Ledger on the PR. A blocking gate reports only to the Producer; Dev acts only after a Producer-authored Branch Reopen Packet. The Producer verifies every required evidence binding, then uses an atomic expected-head merge guard or protected queue that revalidates the Candidate ID; a separate check followed by an unguarded merge is not sufficient.
+The CEO/maintainer sets acceptable risk; the Producer records proportionate checks and gates before implementation. Every code/config candidate has at least one concrete check. High-risk surfaces receive applicable security-focused evidence unless the CEO/maintainer explicitly accepts the risk. Dev captures the tested commit ID before push, freezes the application branch at push, and posts a Candidate Packet only after the observed PR head matches and the current target is its ancestor. The Producer owns a live Delivery Ledger on the PR with Candidate ID and Target Base ID. A blocking gate reports only to the Producer; Dev acts only after a Producer-authored Branch Reopen Packet. The Producer verifies every required evidence binding, then uses an atomic expected-head guard plus enforced target ancestry or a protected queue with equivalent candidate-and-base revalidation; separate checks followed by an unguarded merge are not sufficient.
 
 Evidence may be bound automatically through PR reviews/checks, Git ancestry on a separate evidence branch, or an immutable build/preview; manually copying a commit hash is required only when no such association exists. Every role detects its available mutation capabilities and hands off exact payloads rather than claiming unavailable actions.
 
