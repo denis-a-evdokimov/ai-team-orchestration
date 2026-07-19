@@ -501,13 +501,14 @@ test('validator rejects model pins for every bundled agent', (context) => {
 });
 
 test('validator rejects wrapped or chained fixed Git commands', (context) => {
+  const fetchCommand = 'git -c core.hooksPath=.git/disabled-hooks -c fetch.bundleURI= -c fetch.prune=false -c fetch.pruneTags=false -c fetch.recurseSubmodules=false -c fetch.writeCommitGraph=false -c gc.auto=0 -c maintenance.auto=false -c remote.BASE_REMOTE.prune=false -c remote.BASE_REMOTE.pruneTags=false -c remote.BASE_REMOTE.serverOption= fetch --refmap= --no-tags --no-recurse-submodules --upload-pack=git-upload-pack BASE_REMOTE +refs/heads/TARGET_BRANCH:BASE_REF';
   for (const replacement of [
-    'echo git fetch --prune BASE_REMOTE',
-    'git fetch --prune BASE_REMOTE; echo injected',
+    `echo ${fetchCommand}`,
+    `${fetchCommand}; echo injected`,
   ]) {
     const targetRoot = createRepositoryCopy(context);
     const safeGitPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'safe-git-values.md');
-    mutateText(safeGitPath, 'git fetch --prune BASE_REMOTE', replacement);
+    mutateText(safeGitPath, fetchCommand, replacement);
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /fixed command sequence must exactly match/);
@@ -654,7 +655,9 @@ test('safe Git fixed forms are unquoted for PowerShell POSIX and Command Prompt 
   assert.match(safeGit, /once for each \*\*distinct missing remote name-to-URL mapping\*\*/);
   assert.match(safeGit, /command runs at most once for that shared remote/);
   assert.match(safeGit, /git rev-parse --verify --end-of-options refs\/heads\/WORKING_BRANCH/);
-  assert.match(safeGit, /git push --set-upstream PUSH_REMOTE refs\/heads\/WORKING_BRANCH:refs\/heads\/WORKING_BRANCH/);
+  assert.match(safeGit, /push --no-follow-tags --no-signed --no-verify --recurse-submodules=no --receive-pack=git-receive-pack --set-upstream PUSH_REMOTE refs\/heads\/WORKING_BRANCH:refs\/heads\/WORKING_BRANCH/);
+  assert.match(safeGit, /fetch --refmap= --no-tags --no-recurse-submodules --upload-pack=git-upload-pack BASE_REMOTE \+refs\/heads\/TARGET_BRANCH:BASE_REF/);
+  assert.match(safeGit, /git -c core\.ignoreStat=false status --porcelain=v1 --untracked-files=all --ignore-submodules=none/);
   assert.doesNotMatch(safeGit, /git (?:remote|fetch|switch|push)[^\n]*'BASE_REMOTE'/);
   const result = runValidator(targetRoot);
   assert.equal(result.status, 0, result.stderr);
@@ -663,8 +666,8 @@ test('safe Git fixed forms are unquoted for PowerShell POSIX and Command Prompt 
 test('validator rejects extra destructive commands and documented grammar drift', (context) => {
   for (const mutation of [
     {
-      oldText: 'git status --short',
-      newText: 'git status --short\ngit reset --hard',
+      oldText: 'git -c core.ignoreStat=false status --porcelain=v1 --untracked-files=all --ignore-submodules=none',
+      newText: 'git -c core.ignoreStat=false status --porcelain=v1 --untracked-files=all --ignore-submodules=none\ngit reset --hard',
       expected: /fixed command sequence must exactly match/,
     },
     {

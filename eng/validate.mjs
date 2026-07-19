@@ -53,6 +53,7 @@ const PLAN_FIELDS = [
   'Target branch',
   'Base remote',
   'Base remote URL',
+  'Clone destination',
   'Base ref',
   'Push remote',
   'Push remote URL',
@@ -65,6 +66,7 @@ const PLAN_PLACEHOLDER_VALUES = new Map([
   ['Target branch', '`<target-branch>`'],
   ['Base remote', '`<base-remote>`'],
   ['Base remote URL', '`<base-remote-url>`'],
+  ['Clone destination', '`<clone-destination>`'],
   ['Base ref', '`<base-ref>`'],
   ['Push remote', '`<push-remote>`'],
   ['Push remote URL', '`<push-remote-url>`'],
@@ -808,7 +810,8 @@ function validateSafeGitContract(safeGitPath) {
   }
   if (commands) {
     const expectedSubheadings = [
-      'Validate names and branches',
+      'Validate plan values',
+      'Clone and verify',
       'Verify or add remotes',
       'Fetch and verify the base',
       'Create or reuse the working branch',
@@ -827,6 +830,12 @@ function validateSafeGitContract(safeGitPath) {
       addError(`${SAFE_GIT_PATH} fixed command sequence must exactly match the executable command contract.`);
     }
     requireText(commands, [
+      'treat every URL-producing command as sensitive',
+      'exactly two refs with the same full object ID',
+      'every `git ls-files -v` line beginning with `H `',
+      '`.git/disabled-hooks`',
+      '* -text -filter -diff -ident -working-tree-encoding',
+      'trusted filesystem API',
       'once for each **distinct missing remote name-to-URL mapping**',
       'If `BASE_REMOTE` equals `PUSH_REMOTE`',
       'the command runs at most once for that shared remote',
@@ -1001,13 +1010,19 @@ function validateProjectBrief(projectBriefPath) {
     requireText(section12, ['full tested local commit ID', 'observed application PR head equals that captured ID', 'Producer-owned Delivery Ledger', 'Producer-authored Branch Reopen Packet', 'mandatory authoritative Sections 7/8 update'], projectBriefPath, 'handoff section');
   }
   const remoteTable = section14 && contractTable(section14, projectBriefPath, 'multi-repo table');
-  for (const row of ['Target branch', 'Base remote', 'Base remote URL', 'Base ref', 'Push remote', 'Push remote URL', 'Working branch']) {
+  for (const row of ['Target branch', 'Base remote', 'Base remote URL', 'Clone destination', 'Base ref', 'Push remote', 'Push remote URL', 'Working branch']) {
     if (remoteTable && !remoteTable.rowsByName.has(row)) {
       addError(`${repoPath(projectBriefPath)} multi-repo table is missing "${row}".`);
     }
   }
   if (section14) {
-    requireText(section14, [SAFE_GIT_LINK, 'explicit user confirmation', 'URL mismatch/rewrite/multiplicity'], projectBriefPath, 'multi-repo section');
+    requireText(section14, [
+      SAFE_GIT_LINK,
+      'explicit user confirmation',
+      'URL mismatch/rewrite/multiplicity',
+      'must not exist before cloning',
+      'fixed clone sequence',
+    ], projectBriefPath, 'multi-repo section');
   }
   const gateTable = section15 && contractTable(section15, projectBriefPath, 'delivery gate table');
   for (const row of [...DELIVERY_GATE_ROWS, 'Reopen budget']) {

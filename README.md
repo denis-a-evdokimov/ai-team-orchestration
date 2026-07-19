@@ -110,7 +110,7 @@ The human acts as the message bus between parallel chats:
 - **@ai-team-producer** edits coordination docs, selects gates with the CEO/maintainer, commissions selected independent analysis or QA, and merges; it never implements or runs tests
 - **@ai-team-qa** is used when selected; it edits tests and QA docs, accepts or blocks the frozen candidate, and never fixes application source
 - **@ai-team-dev** builds with Nova (interaction/presentation), Sage (core/services/security), and Milo (experience/design) perspectives adapted to the discovered stack
-- Use a **separate clone per concurrent session**. Dev uses the planned working branch; QA normally checks out the frozen candidate and needs a separate branch only for test/evidence commits.
+- Use a **separate clone per concurrent session**. Dev uses the planned working branch; QA normally checks out the frozen candidate and needs a separate branch only for test/evidence commits. Validate clone coordinates and use the skill's fixed Safe Git clone sequence rather than interpolating repository-provided command text.
 
 ## Customization
 

@@ -5,6 +5,7 @@ import {
   expectedBaseRef,
   validateBaseRef,
   validateBranchName,
+  validateCloneDestination,
   validateGitPlanCoordinates,
   validateRemoteName,
   validateRemoteUrl,
@@ -14,6 +15,7 @@ const VALID_PLAN = {
   baseRef: 'refs/remotes/upstream/main',
   baseRemote: 'upstream',
   baseRemoteUrl: 'https://github.com/example/project.git',
+  cloneDestination: 'project-dev',
   pushRemote: 'origin',
   pushRemoteUrl: 'git@github.com:contributor/project.git',
   targetBranch: 'main',
@@ -63,6 +65,31 @@ test('remote URLs reject credentials queries fragments local paths and unsafe se
     'https://example.com/org/repo.git;evil',
   ]) {
     assert.throws(() => validateRemoteUrl(value), /whitespace|metacharacters|credential-free|credentials|query|unsafe/);
+  }
+});
+
+test('clone destinations accept one portable new directory name', () => {
+  for (const value of ['project-dev', 'qa_2', 'release.2', 'a'.repeat(64)]) {
+    assert.equal(validateCloneDestination(value), value);
+  }
+  for (const value of [
+    '../project',
+    'nested/project',
+    'project.',
+    '-project',
+    'project dev',
+    'CON',
+    'con.md',
+    'Nul.txt',
+    'COM1',
+    'lpt9.log',
+    'CLOCK$',
+    'a'.repeat(65),
+  ]) {
+    assert.throws(
+      () => validateCloneDestination(value),
+      /whitespace|metacharacters|portable relative directory-name/,
+    );
   }
 });
 
