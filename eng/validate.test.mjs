@@ -621,9 +621,14 @@ test('validator rejects wrong gate owners and disabled freeze detection', (conte
       expected: /gate "Independent review" must be owned by "Producer \/ non-author reviewer"/,
     },
     {
-      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
+      oldText: '| Freeze detection | [expected-head plus enforced target-ancestor rule / protected merge queue with candidate-and-base revalidation / other equivalent] | Producer |',
       newText: '| Freeze detection | none | Dev |',
       expected: /gate "Freeze detection" must be owned by "Producer"|Freeze detection must define an enforceable mechanism/,
+    },
+    {
+      oldText: '| Freeze detection | [expected-head plus enforced target-ancestor rule / protected merge queue with candidate-and-base revalidation / other equivalent] | Producer | [how merge rejects or requeues when head differs from Candidate ID or current target is not its ancestor] |',
+      newText: '| Freeze detection | [expected-head plus enforced target-ancestor rule / protected merge queue with candidate-and-base revalidation / other equivalent] | Producer | [how merge rejects a head different from Candidate ID] |',
+      expected: /Freeze detection must bind both candidate head and target ancestry/,
     },
   ]) {
     const targetRoot = createRepositoryCopy(context);
@@ -695,26 +700,26 @@ test('validator rejects duplicate shared-remote setup and non-atomic merge autho
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
-      oldText: 'Use a regular merge, but make the merge operation itself atomically require the application head to equal the Delivery Ledger Candidate ID.',
+      oldText: 'The merge operation itself must atomically require the application head to equal the Delivery Ledger Candidate ID, and the platform must enforce at merge time that the authoritative current target head is an ancestor of that candidate.',
       newText: 'Compare the current head, then use a regular merge without an expected-head condition.',
       expected: /merge\/status section must contain/,
     },
     {
       relativePath: ['agents', 'ai-team-producer.agent.md'],
-      oldText: 'The merge operation itself must atomically require the application head to equal that Candidate ID',
-      newText: 'Compare the application head before invoking an unguarded merge',
+      oldText: 'The merge operation itself must atomically require the application head to equal that Candidate ID and use branch protection or a protected queue that enforces the target-ancestor rule',
+      newText: 'Compare the application head and target base before invoking an unguarded merge',
       expected: /Producer protocol must contain/,
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'project-brief-template.md'],
-      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
+      oldText: '| Freeze detection | [expected-head plus enforced target-ancestor rule / protected merge queue with candidate-and-base revalidation / other equivalent] | Producer |',
       newText: '| Freeze detection | PR marker plus separate head comparison | Producer |',
       expected: /Freeze detection must use the canonical atomic merge template/,
     },
     {
       relativePath: ['skills', 'ai-team', 'SKILL.md'],
-      oldText: 'atomic expected-head merge guard',
-      newText: 'ordinary merge after a head comparison',
+      oldText: 'atomic expected-head guard plus enforced target ancestry',
+      newText: 'ordinary merge after separate head and base comparisons',
       expected: /delivery summary must contain/,
     },
   ]) {
@@ -748,6 +753,63 @@ test('validator rejects artifact and trust authority contradictions', (context) 
     const targetRoot = createRepositoryCopy(context);
     const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
     mutateText(workflowPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, mutation.expected);
+  }
+});
+
+test('validator rejects missing target-base lifecycle binding', (context) => {
+  for (const mutation of [
+    {
+      oldText: '- **Observed Target Base ID:** [full authoritative target commit ID]',
+      newText: '- **Target branch:** [name only]',
+      expected: /Candidate Packet — Dev must contain "\*\*Observed Target Base ID:\*\*"/,
+    },
+    {
+      oldText: '| Target Base ID | full commit object ID that the authoritative target branch resolves to at observation time; current target must be an ancestor of Candidate ID at merge |',
+      newText: '| Target branch | movable branch name only |',
+      expected: /trust table is missing "Target Base ID"|trust decision/,
+    },
+    {
+      oldText: '- the authoritative current target head is an ancestor of that Candidate ID and the Delivery Ledger records the observed Target Base ID;',
+      newText: '- the target branch name is recorded;',
+      expected: /merge\/status section must contain/,
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const workflowPath = path.join(targetRoot, 'skills', 'ai-team', 'references', 'delivery-workflow.md');
+    mutateText(workflowPath, mutation.oldText, mutation.newText);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, mutation.expected);
+  }
+});
+
+test('validator rejects head-only handoff and merge anti-pattern guidance', (context) => {
+  for (const mutation of [
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'project-brief-template.md'],
+      oldText: 'confirm the observed application PR head equals that captured ID and the authoritative target head is an ancestor of it',
+      newText: 'confirm the observed application PR head equals that captured ID',
+      expected: /handoff section must contain "authoritative target head is an ancestor of it"/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'anti-patterns.md'],
+      oldText: 'Use an atomic expected-head guard plus enforced current-target ancestry and required checks, or a protected queue with equivalent candidate-and-base revalidation',
+      newText: 'Use an atomic expected-head guard',
+      expected: /merge anti-pattern must contain/,
+    },
+    {
+      relativePath: ['skills', 'ai-team', 'references', 'safe-git-values.md'],
+      oldText: 'Post a Candidate Packet only when both head equality and target ancestry hold',
+      newText: 'Post a Candidate Packet when head equality holds',
+      expected: /remote creation contract must contain/,
+    },
+  ]) {
+    const targetRoot = createRepositoryCopy(context);
+    const filePath = path.join(targetRoot, ...mutation.relativePath);
+    mutateText(filePath, mutation.oldText, mutation.newText);
     const result = runValidator(targetRoot);
     assert.equal(result.status, 1);
     assert.match(result.stderr, mutation.expected);
@@ -989,7 +1051,7 @@ test('validator rejects critical state exit and artifact authority mutations', (
       expected: /state "Frozen" must have canonical exit condition/,
     },
     {
-      oldText: '| Delivery Ledger | Producer, one live PR comment | Sole live lifecycle index: state, full Candidate ID, selected gates/statuses, reopen count/budget, evidence links, approvals, and next action. |',
+      oldText: '| Delivery Ledger | Producer, one live PR comment | Sole live lifecycle index: state, full Candidate ID, Target Base ID/current heads, selected gates/statuses, defect reopen count/budget, base refresh count, evidence links, approvals, and next action. |',
       newText: '| Delivery Ledger | Producer, one live PR comment | Dev may merge whenever it updates the ledger. |',
       expected: /artifact "Delivery Ledger" must have canonical authority/,
     },
@@ -1036,7 +1098,7 @@ test('validator rejects hidden safety clauses and contradictory freeze selection
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'sprint-plan-template.md'],
-      oldText: '| Freeze detection | [atomic expected-head merge / protected merge queue with candidate revalidation / other equivalent] | Producer |',
+      oldText: '| Freeze detection | [expected-head plus enforced target-ancestor rule / protected merge queue with candidate-and-base revalidation / other equivalent] | Producer |',
       newText: '| Freeze detection | no branch protection; freeze checks disabled | Producer |',
       expected: /Freeze detection must use the canonical enforceable-mechanism template/,
     },
@@ -1077,7 +1139,7 @@ test('validator rejects critical clauses hidden in CommonMark container fences',
     },
     {
       relativePath: ['skills', 'ai-team', 'references', 'delivery-workflow.md'],
-      anchor: 'Use a regular merge, but make the merge operation itself atomically require the application head to equal the Delivery Ledger Candidate ID.',
+      anchor: 'Use a regular merge.',
       text: 'no unresolved blocker or major finding remains;',
       expected: /merge\/status section must contain/,
     },

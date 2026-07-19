@@ -69,12 +69,12 @@ Before Dev starts, run a team consilium, classify the change risk, record at lea
 ```
 @ai-team-dev Read PROJECT_BRIEF.md, then docs/sprint-1/plan.md. Execute Sprint 1.
 Preflight a clean worktree, then use the target branch, base remote/ref, push remote, and working branch recorded in the sprint plan. Never substitute a default branch for those plan values.
-Implement and run the selected Dev checks, capture the full tested local commit ID, then immediately push and freeze. Create/update the PR and post the Candidate Packet only after its observed head equals that captured ID. A mismatch means Hold, not reassignment of earlier checks. If PR mutation is unavailable, remain frozen while handing off the captured ID plus exact PR and draft packet payload for equality verification.
+Implement and run the selected Dev checks, capture the full tested local commit ID, then immediately push and freeze. Create/update the PR and post the Candidate Packet only after its observed head equals that captured ID and the authoritative target head is its ancestor. A mismatch means Hold, not reassignment of earlier checks. If PR or target resolution is unavailable, remain frozen while handing off the captured ID plus exact PR and draft packet payload for both verifications.
 ```
 
 The CEO/maintainer sets acceptable risk and only they may approve reducing the project baseline. A low-risk project may use Dev-authored checks without independent review or QA, but every code/config candidate has at least one concrete check. Authentication/authorization, secrets or EUII, destructive data, privilege/deployment, supply-chain, and declared safety-invariant changes require applicable security-focused evidence or explicit CEO/maintainer risk acceptance.
 
-After Dev hands off, the Producer records the full candidate commit ID in a live Delivery Ledger on the PR. The application branch stays frozen while selected gates run and after they pass.
+After Dev hands off, the Producer records the full Candidate ID and observed Target Base ID in a live Delivery Ledger on the PR. The application branch stays frozen while selected gates run and after they pass.
 
 ### 4. Run independent review (when selected)
 
@@ -91,7 +91,7 @@ After Dev hands off, the Producer records the full candidate commit ID in a live
 ### 6. Decide and merge
 
 ```text
-@ai-team-producer Confirm every planned check and selected gate is bound to the Delivery Ledger Candidate ID and required approval is recorded. Regular-merge with an atomic expected-head guard equal to that Candidate ID, or a protected merge queue that revalidates candidate-bound evidence. A guard failure means Hold. Then run selected post-merge checks and complete the authoritative PROJECT_BRIEF.md Sections 7 and 8 update. Archive evidence separately only if project policy requires it.
+@ai-team-producer Confirm every planned check and selected gate is bound to the Delivery Ledger Candidate ID, current target is its ancestor, and required approval is recorded. Regular-merge with an atomic expected-head guard plus branch protection enforcing up-to-date ancestry and required checks, or a protected merge queue with equivalent candidate-and-base revalidation. A guard failure means Hold. Then run selected post-merge checks and complete the authoritative PROJECT_BRIEF.md Sections 7 and 8 update. Archive evidence separately only if project policy requires it.
 ```
 
 ## How It Works

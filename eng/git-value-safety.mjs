@@ -67,6 +67,9 @@ export const SAFE_GIT_FIXED_COMMANDS = [
   'git rev-parse --verify --end-of-options refs/heads/WORKING_BRANCH',
   'git cat-file -t refs/heads/WORKING_BRANCH',
   'git -c core.hooksPath=.git/disabled-hooks -c push.followTags=false -c push.gpgSign=false -c push.negotiate=false -c push.pushOption= -c push.recurseSubmodules=no -c remote.PUSH_REMOTE.mirror=false push --no-follow-tags --no-signed --no-verify --recurse-submodules=no --receive-pack=git-receive-pack --set-upstream PUSH_REMOTE refs/heads/WORKING_BRANCH:refs/heads/WORKING_BRANCH',
+  'git -c core.hooksPath=.git/disabled-hooks -c fetch.bundleURI= -c fetch.prune=false -c fetch.pruneTags=false -c fetch.recurseSubmodules=false -c fetch.writeCommitGraph=false -c gc.auto=0 -c maintenance.auto=false -c remote.BASE_REMOTE.prune=false -c remote.BASE_REMOTE.pruneTags=false -c remote.BASE_REMOTE.serverOption= fetch --refmap= --no-tags --no-recurse-submodules --upload-pack=git-upload-pack BASE_REMOTE +refs/heads/TARGET_BRANCH:BASE_REF',
+  'git rev-parse --verify --end-of-options BASE_REF',
+  'git merge-base --is-ancestor BASE_REF refs/heads/WORKING_BRANCH',
 ];
 
 function nonEmptyString(value, label) {
