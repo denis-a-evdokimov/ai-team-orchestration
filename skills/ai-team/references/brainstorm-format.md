@@ -1,6 +1,6 @@
 # Brainstorm Format
 
-Use this format to produce real creative debate — not generic "the team agrees" output. One orchestrating session simulates the named team voices below; they are perspectives, not separate custom-agent sessions, owners, or delivery-gate authorities.
+Use this format to produce real creative debate — not generic "the team agrees" output. The key is naming each agent explicitly with a distinct personality and perspective.
 
 ## Prompt Template
 
@@ -14,16 +14,16 @@ This is a creative session — no idea is too wild in Phase 1.
 - Thinks about: user delight, accessibility, "would this be fun?"
 - Tendency: pushes for features that spark joy, pushes back on anything that feels like homework
 
-### Milo (Visual/Experience Director)
-- Thinks about: visual identity, cohesion, "does this look and feel right?"
-- Tendency: wants everything beautiful, sometimes at odds with engineering feasibility
+### Milo (Experience/Design Perspective)
+- Thinks about: accessibility, presentation, content, cohesion, "does this feel right?"
+- Tendency: advocates for user experience, sometimes at odds with engineering feasibility
 
-### Nova (Client/Interaction Engineer)
-- Thinks about: component architecture, state management, "can we actually build this?"
+### Nova (Client/Interaction Perspective)
+- Thinks about: user-facing behavior, interaction, state, "can we actually build this?"
 - Tendency: pragmatic, flags scope risks, suggests simpler alternatives
 
-### Sage (Core/Service Engineer)
-- Thinks about: data model, API design, security, "where do secrets live?"
+### Sage (Core/Service Perspective)
+- Thinks about: domain logic, data, services, integrations, security, "where do risks live?"
 - Tendency: security-first, sometimes over-engineers, good at spotting edge cases
 
 ### Remy (Producer)
@@ -35,11 +35,11 @@ This is a creative session — no idea is too wild in Phase 1.
 - Tendency: pessimistic about reliability, asks uncomfortable "what if" questions
 
 Phase 1 — Free Ideation:
-Each perspective pitches 2-3 raw ideas.
+Each agent pitches 2-3 raw ideas from their perspective.
 Wild ideas welcome. No filtering.
 
 Phase 2 — Discussion & Refinement:
-Perspectives debate, combine, and critique ideas.
+Agents debate, combine, and critique ideas.
 They reference each other by name: "Kira, that's great but..."
 They push back on weak points.
 At least 2 genuine disagreements.
@@ -49,20 +49,15 @@ Phase 3 — Final Pitches:
 Each concept includes: name, description, pros, cons, estimated effort.
 Team vote with brief justification from each voter.
 
-Output all phases as separate files:
-- docs/brainstorm/01-free-ideation.md
-- docs/brainstorm/02-discussion.md
-- docs/brainstorm/03-concept-[A/B/C...].md (one per concept)
-- docs/brainstorm/04-team-vote.md
-- docs/brainstorm/05-summary.md
+Write the result to one concise design note unless the project needs separate artifacts.
 ```
 
 ## Tips
 
-- **Name each perspective** — "you are the full team" produces bland consensus
+- **Name each agent** — "you are the full team" produces bland consensus
 - **Define tendencies** — gives the LLM permission to disagree
 - **Require disagreements** — "at least 2 genuine disagreements" prevents groupthink
-- **Separate files** — forces structured output, makes it reviewable
+- **Keep the output proportional** — one note is usually enough
 - **Customize personas** — adjust for your domain (e.g., replace Kira with a Data Scientist for ML projects)
 
 ## Mini-Brainstorm (Quick Version)
@@ -71,7 +66,7 @@ For smaller decisions (e.g., "how should we implement the scoreboard?"):
 
 ```
 Run a team brainstorm about [TOPIC].
-Each simulated perspective speaks separately.
+Each agent speaks separately with their own perspective.
 They should debate and disagree.
 Write results to docs/[topic]-design.md.
 ```
@@ -82,7 +77,7 @@ Before major sprints, validate the plan:
 
 ```
 Run a team consilium on the Sprint N plan.
-Each simulated perspective reviews the plan:
+Each agent reviews from their perspective:
 - Kira: Is it fun / useful? Missing features?
 - Nova: Technically feasible? Scope risks?
 - Sage: Security concerns? API design issues?

@@ -6,7 +6,7 @@ Work on a feature branch. This repository is the canonical source; do not begin 
 
 All changes enter `main` through a pull request; direct pushes and force pushes are blocked. Every pull request must pass the repository validation workflow, and unresolved review conversations block merging. External contributions require one approval from the repository owner. Because GitHub does not count an author's approval of their own pull request, the owner may bypass only the approval requirement for an owner-authored pull request; required checks and the pull-request-only path still apply.
 
-Use a regular merge. Squash and rebase merges are disabled so SHA-bound review and QA evidence remains meaningful. A new commit invalidates stale approval and must pass validation again.
+Use a regular merge. Squash and rebase merges are disabled by repository policy. A new commit must pass validation again and may require renewed approval according to branch protection.
 
 Do not put secrets or end-user identifying information in code, fixtures, documentation, issues, pull requests, screenshots, or logs. Report suspected vulnerabilities privately as described in [.github/SECURITY.md](./.github/SECURITY.md).
 
@@ -32,7 +32,7 @@ For packaging or content changes, test the standalone checkout directly before e
 3. Confirm that `@ai-team-producer`, `@ai-team-dev`, and `@ai-team-qa` are available.
 4. Confirm that the `ai-team` skill loads. In a plugin installation, VS Code may show its namespace-prefixed command, such as `/ai-team-orchestration:ai-team`.
 5. Enable a test MCP or extension-provided tool, switch among the three AI Team agents, and confirm the tool remains available. The bundled agents intentionally omit `tools` and must not replace the user's enabled tool set.
-6. Exercise the changed prompt or workflow without changing the stable IDs or local skill name.
+6. Exercise the changed agent or skill guidance without changing the stable IDs or local skill name.
 
 If more than 128 tools are enabled, reduce the selection in the tool picker or configure `github.copilot.chat.virtualTools.threshold` before the smoke test.
 
