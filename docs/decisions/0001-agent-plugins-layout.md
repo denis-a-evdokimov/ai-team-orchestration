@@ -4,7 +4,7 @@
 - Date: 2026-11-22
 - Decided by: Denis (approved plan: "use the installed layout, keep one copy, and rename the source skill to ai-team-orchestration")
 - Review: see the pull request `## Review` section
-- Links: #18; content alignment in #16
+- Links: pull request [#18](https://github.com/denis-a-evdokimov/ai-team-orchestration/pull/18); content alignment in [#16](https://github.com/denis-a-evdokimov/ai-team-orchestration/pull/16); agent setting in [#17](https://github.com/denis-a-evdokimov/ai-team-orchestration/pull/17)
 
 ## Context
 
@@ -13,6 +13,7 @@
 - The root `plugin.json` used the legacy `agents` and `skills` fields and had no `$schema`. The public Awesome Copilot gate for external plugins rejects this manifest. Evidence: the [spec compliance gate](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/.github/scripts/external-plugins/external-plugin-quality-gates.mjs#L193-L315) and the [Agent Plugins 1.0 schema](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/.github/scripts/lib/agent-plugin-schema.mjs#L5-L29).
 - Awesome Copilot also lists external plugins. An external entry points to a public repository, an optional `source.path` and an immutable commit. See the [external plugin contract](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346).
 - Denis wants to maintain the plugin in this repository. Later, a separate approved change can replace the native Awesome Copilot entry with an external entry.
+- Version 2.1.0 ([#17](https://github.com/denis-a-evdokimov/ai-team-orchestration/pull/17)) added `include-custom-instructions: true` to the three agents in the legacy layout. The native Awesome Copilot copy does not have this setting.
 
 ## Options considered
 
@@ -27,11 +28,11 @@
 We chose option 3 with the folder `plugins/ai-team-orchestration`:
 
 - Keep one copy of the plugin in `plugins/ai-team-orchestration/`. This folder is the plugin root and the installed payload.
-- Use the layout of the installed plugin: `plugin.json`, `README.md`, `com.github.copilot/agents/<id>.md` and `skills/ai-team-orchestration/`.
+- Use the layout of the installed plugin: `plugin.json`, `README.md`, `com.github.copilot/agents/<id>.md` and `skills/ai-team-orchestration/`. The plugin root contains exactly these files.
 - Use only Agent Plugins 1.0 fields in `plugin.json`, with its `$schema`. Discovery uses the standard `skills/` folder and the Copilot `com.github.copilot/` namespace.
 - Rename the skill from `ai-team` to `ai-team-orchestration`. The skill name now equals the installed name.
 - Remove the Awesome Copilot exporter, its test, its configuration and its npm scripts.
-- Release the layout change as version 2.0.1. The agent and skill content does not change.
+- Release the layout change as version 2.1.1. The agent and skill content of version 2.1.0 does not change. Only the skill frontmatter name changes.
 
 This diagram shows how the plugin reached users before and after this decision.
 
@@ -42,14 +43,14 @@ flowchart LR
         Copy1 -->|Awesome build| Native1["Native marketplace entry"]
     end
     subgraph After
-        Src2["plugins/ai-team-orchestration, one copy"] -->|"source.path and commit SHA"| Entry2["External marketplace entry"]
+        Src2["plugins/ai-team-orchestration, one copy"] -->|"source.path and commit SHA"| Entry2["External marketplace entry, separate approved follow-up"]
         Src2 -->|"--plugin-dir"| Dev2["Local development"]
     end
 ```
 
 ## Consequences
 
-- Positive: one copy and one skill name remain. Users get the same files that the current native install contains.
+- Positive: one copy and one skill name remain. Users get the file set of the current native install. The agents add the version 2.1.0 setting.
 - Positive: the plugin root passes the pinned spec compliance and `vally lint` gates. An external entry can point to `plugins/ai-team-orchestration` at a commit SHA.
 - Negative: a user who invoked the source skill as `ai-team` must use `ai-team-orchestration`.
 - Negative: an install from the repository root no longer finds a plugin. Install routes must point to the plugin root.

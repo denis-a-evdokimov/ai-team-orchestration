@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
+  linkSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -14,15 +16,21 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const AGENTS = ['com.github.copilot', 'agents'];
+const SKILL = ['skills', 'ai-team-orchestration'];
 
 function createRepositoryCopy(context) {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-validate-'));
+  context.after(() => rmSync(targetRoot, { force: true, recursive: true }));
   cpSync(REPO_ROOT, targetRoot, {
     filter: (sourcePath) => path.basename(sourcePath) !== '.git',
     recursive: true,
   });
-  context.after(() => rmSync(targetRoot, { force: true, recursive: true }));
   return targetRoot;
+}
+
+function pluginPath(targetRoot, ...segments) {
+  return path.join(targetRoot, 'plugins', 'ai-team-orchestration', ...segments);
 }
 
 function runValidator(targetRoot) {
@@ -30,10 +38,6 @@ function runValidator(targetRoot) {
     cwd: targetRoot,
     encoding: 'utf8',
   });
-}
-
-function pluginPath(targetRoot, ...segments) {
-  return path.join(targetRoot, 'plugins', 'ai-team-orchestration', ...segments);
 }
 
 function mutateText(filePath, oldText, newText) {
@@ -49,10 +53,25 @@ function mutatePlugin(targetRoot, mutation) {
   writeFileSync(manifestPath, `${JSON.stringify(plugin, null, 2)}\n`, 'utf8');
 }
 
+function copyFile(sourcePath, targetPath) {
+  mkdirSync(path.dirname(targetPath), { recursive: true });
+  cpSync(sourcePath, targetPath);
+}
+
 function assertRejected(targetRoot, pattern) {
   const result = runValidator(targetRoot);
   assert.equal(result.status, 1, result.stdout);
   assert.match(result.stderr, pattern);
+}
+
+function trySymlink(context, target, linkPath) {
+  try {
+    symlinkSync(target, linkPath, process.platform === 'win32' ? 'file' : undefined);
+    return true;
+  } catch (error) {
+    context.skip(`Symbolic links are unavailable: ${error.message}`);
+    return false;
+  }
 }
 
 test('validator accepts the plugin repository', (context) => {
@@ -66,7 +85,7 @@ test('bundled agents intentionally omit tools and model', (context) => {
   for (const field of ['tools', 'model']) {
     const targetRoot = createRepositoryCopy(context);
     mutateText(
-      pluginPath(targetRoot, 'com.github.copilot', 'agents', 'ai-team-dev.md'),
+      pluginPath(targetRoot, ...AGENTS, 'ai-team-dev.md'),
       "name: 'ai-team-dev'",
       `name: 'ai-team-dev'\n${field}: 'unexpected'`,
     );
@@ -83,7 +102,7 @@ test('bundled agents opt in to repository instructions as subagents', (context) 
   ]) {
     const targetRoot = createRepositoryCopy(context);
     mutateText(
-      pluginPath(targetRoot, 'com.github.copilot', 'agents', 'ai-team-qa.md'),
+      pluginPath(targetRoot, ...AGENTS, 'ai-team-qa.md'),
       'include-custom-instructions: true',
       replacement,
     );
@@ -91,105 +110,154 @@ test('bundled agents opt in to repository instructions as subagents', (context) 
   }
 });
 
-test('validator enforces the three stable agent IDs and file names', (context) => {
+test('validator enforces the three stable agent IDs and file names', async (context) => {
   for (const renamedFile of ['dev.md', 'ai-team-dev.agent.md']) {
-    const targetRoot = createRepositoryCopy(context);
-    const agentPath = pluginPath(targetRoot, 'com.github.copilot', 'agents', 'ai-team-dev.md');
-    writeFileSync(
-      pluginPath(targetRoot, 'com.github.copilot', 'agents', renamedFile),
-      readFileSync(agentPath, 'utf8'),
-      'utf8',
-    );
-    rmSync(agentPath);
-    assertRejected(targetRoot, /com\.github\.copilot\/agents must contain exactly: ai-team-dev\.md/);
+    await context.test(`rename to ${renamedFile}`, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      const agentPath = pluginPath(targetRoot, ...AGENTS, 'ai-team-dev.md');
+      copyFile(agentPath, pluginPath(targetRoot, ...AGENTS, renamedFile));
+      rmSync(agentPath);
+      assertRejected(targetRoot, /com\.github\.copilot\/agents\/ai-team-dev\.md is missing/);
+    });
   }
 });
 
-test('validator enforces the skill identity and frontmatter', (context) => {
-  for (const mutation of [
-    ['name: ai-team-orchestration', 'name: ai-team', /must match folder name|name line must be exactly/],
-    ["description: 'Bootstrap", "tools: []\ndescription: 'Bootstrap", /unsupported frontmatter field "tools"/],
+test('validator enforces the skill identity and frontmatter', async (context) => {
+  for (const [name, oldText, newText, pattern] of [
+    ['another name', 'name: ai-team-orchestration', 'name: ai-team', /must match folder name/],
+    ['quoted name', 'name: ai-team-orchestration', "name: 'ai-team-orchestration'", /name line must be exactly "name: ai-team-orchestration"/],
+    ['extra field', "description: 'Bootstrap", "tools: []\ndescription: 'Bootstrap", /unsupported frontmatter field "tools"/],
   ]) {
-    const targetRoot = createRepositoryCopy(context);
-    mutateText(pluginPath(targetRoot, 'skills', 'ai-team-orchestration', 'SKILL.md'), mutation[0], mutation[1]);
-    assertRejected(targetRoot, mutation[2]);
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(pluginPath(targetRoot, ...SKILL, 'SKILL.md'), oldText, newText);
+      assertRejected(targetRoot, pattern);
+    });
   }
 });
 
 test('validator rejects unresolved relative Markdown links', (context) => {
   const targetRoot = createRepositoryCopy(context);
   mutateText(
-    pluginPath(targetRoot, 'skills', 'ai-team-orchestration', 'SKILL.md'),
+    pluginPath(targetRoot, ...SKILL, 'SKILL.md'),
     '[anti-patterns](./references/anti-patterns.md)',
     '[anti-patterns](./references/missing.md)',
   );
-  assertRejected(targetRoot, /unresolved relative Markdown link/);
+  assertRejected(targetRoot, /unresolved relative Markdown link: \.\/references\/missing\.md/);
 });
 
-test('validator rejects plugin links that leave the installed payload', (context) => {
-  const targetRoot = createRepositoryCopy(context);
-  mutateText(
-    pluginPath(targetRoot, 'README.md'),
-    '## Origin',
-    '[License](../../LICENSE)\n\n## Origin',
-  );
-  assertRejected(targetRoot, /links outside plugins\/ai-team-orchestration/);
-});
-
-test('validator requires an Agent Plugins 1.0 manifest', (context) => {
-  for (const [mutation, pattern] of [
-    [(plugin) => { plugin.agents = 'agents/'; }, /field "agents" is not part of Agent Plugins 1\.0/],
-    [(plugin) => { delete plugin.$schema; }, /field "\$schema" must be exactly/],
-    [(plugin) => { delete plugin.description; }, /field "description" must be a non-empty string/],
-    [(plugin) => { plugin.author = 'Denis Evdokimov'; }, /field "author" must be an object/],
+test('validator rejects plugin links that leave the installed payload', async (context) => {
+  for (const [name, link, pattern] of [
+    ['parent-relative link', '[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['root-relative link', '[License](/LICENSE)', /root-relative link/],
+    ['link with a parenthesized title', '[License](../../LICENSE (License))', /links outside plugins\/ai-team-orchestration/],
   ]) {
-    const targetRoot = createRepositoryCopy(context);
-    mutatePlugin(targetRoot, mutation);
-    assertRejected(targetRoot, pattern);
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', `${link}\n\n## Origin`);
+      assertRejected(targetRoot, pattern);
+    });
   }
 });
 
-test('validator keeps only plugin files in the plugin root', (context) => {
-  const targetRoot = createRepositoryCopy(context);
-  writeFileSync(pluginPath(targetRoot, 'NOTES.md'), '# Notes\n', 'utf8');
-  assertRejected(targetRoot, /plugins\/ai-team-orchestration must contain exactly/);
-});
-
-test('validator keeps exactly one copy of plugin content', (context) => {
-  for (const relativePath of [
-    ['plugin.json'],
-    ['skills', 'ai-team-orchestration', 'SKILL.md'],
-    ['agents', 'ai-team-dev.agent.md'],
+test('validator requires an Agent Plugins 1.0 manifest', async (context) => {
+  for (const [name, mutation, pattern] of [
+    ['legacy agents field', (plugin) => { plugin.agents = 'agents/'; }, /field "agents" is not part of Agent Plugins 1\.0/],
+    ['missing $schema', (plugin) => { delete plugin.$schema; }, /field "\$schema" must be exactly/],
+    ['missing description', (plugin) => { delete plugin.description; }, /field "description" must be a non-empty string/],
+    ['version object', (plugin) => { plugin.version = { toString: null }; }, /field "version" must be a non-empty string/],
+    ['author string', (plugin) => { plugin.author = 'Example Author'; }, /field "author" must be an object/],
+    ['repository outside GitHub', (plugin) => { plugin.repository = 'https://example.com/plugin'; }, /field "repository" must be an https:\/\/github\.com\/ URL/],
+    ['empty homepage', (plugin) => { plugin.homepage = ''; }, /field "homepage" must be a non-empty string/],
+    ['extensions array', (plugin) => { plugin.extensions = []; }, /field "extensions" must map namespaces to objects/],
   ]) {
-    const targetRoot = createRepositoryCopy(context);
-    const copyPath = path.join(targetRoot, ...relativePath);
-    cpSync(pluginPath(targetRoot, 'plugin.json'), copyPath, { force: true });
-    assertRejected(targetRoot, /is plugin content outside plugins\/ai-team-orchestration/);
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutatePlugin(targetRoot, mutation);
+      assertRejected(targetRoot, pattern);
+    });
   }
 });
 
-test('validator rejects linked skill content', (context) => {
-  const targetRoot = createRepositoryCopy(context);
-  const linkedPath = pluginPath(targetRoot, 'skills', 'ai-team-orchestration', 'references', 'linked.md');
-  try {
-    symlinkSync(
-      pluginPath(targetRoot, 'README.md'),
-      linkedPath,
-      process.platform === 'win32' ? 'file' : undefined,
-    );
-  } catch (error) {
-    context.skip(`Symbolic links are unavailable: ${error.message}`);
-    return;
+test('validator keeps the installed file set exact', async (context) => {
+  await context.test('extra top-level file', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    writeFileSync(pluginPath(targetRoot, 'NOTES.md'), '# Notes\n', 'utf8');
+    assertRejected(targetRoot, /plugins\/ai-team-orchestration\/NOTES\.md is not part of the plugin file set/);
+  });
+  await context.test('second package inside the skill', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    copyFile(pluginPath(targetRoot, 'plugin.json'), pluginPath(targetRoot, ...SKILL, 'references', 'copy', 'plugin.json'));
+    assertRejected(targetRoot, /references\/copy\/plugin\.json is not part of the plugin file set/);
+  });
+  await context.test('missing reference', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    rmSync(pluginPath(targetRoot, ...SKILL, 'references', 'anti-patterns.md'));
+    assertRejected(targetRoot, /references\/anti-patterns\.md is missing or is not a regular file/);
+  });
+  await context.test('directory in place of README.md', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const readmePath = pluginPath(targetRoot, 'README.md');
+    const contents = readFileSync(readmePath);
+    rmSync(readmePath);
+    mkdirSync(readmePath);
+    writeFileSync(path.join(readmePath, 'index.md'), contents);
+    assertRejected(targetRoot, /README\.md is missing or is not a regular file/);
+  });
+});
+
+test('validator keeps exactly one copy of plugin content', async (context) => {
+  for (const [name, source, target, pattern] of [
+    ['agent with the installed name', [...AGENTS, 'ai-team-dev.md'], ['agents', 'ai-team-dev.md'], /agents\/ai-team-dev\.md is plugin content outside/],
+    ['agent with the legacy name', [...AGENTS, 'ai-team-dev.md'], ['agents', 'ai-team-dev.agent.md'], /agents\/ai-team-dev\.agent\.md is plugin content outside/],
+    ['skill', [...SKILL, 'SKILL.md'], ['skills', 'ai-team-orchestration', 'SKILL.md'], /skills\/ai-team-orchestration\/SKILL\.md is plugin content outside/],
+    ['manifest', ['plugin.json'], ['plugin.json'], /^- plugin\.json is plugin content outside/m],
+    ['reference under another name', [...SKILL, 'references', 'anti-patterns.md'], ['docs', 'notes.md'], /docs\/notes\.md duplicates plugins\/ai-team-orchestration\/skills\/ai-team-orchestration\/references\/anti-patterns\.md/],
+  ]) {
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      copyFile(pluginPath(targetRoot, ...source), path.join(targetRoot, ...target));
+      assertRejected(targetRoot, pattern);
+    });
   }
-  assertRejected(targetRoot, /must not be a symbolic link/);
+});
+
+test('validator rejects linked plugin content', async (context) => {
+  await context.test('linked reference', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    if (trySymlink(subtest, pluginPath(targetRoot, 'README.md'), pluginPath(targetRoot, ...SKILL, 'references', 'linked.md'))) {
+      assertRejected(targetRoot, /references\/linked\.md must not be a symbolic link/);
+    }
+  });
+  await context.test('linked manifest', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const manifestPath = pluginPath(targetRoot, 'plugin.json');
+    const outsidePath = path.join(targetRoot, 'outside.json');
+    copyFile(manifestPath, outsidePath);
+    rmSync(manifestPath);
+    if (trySymlink(subtest, outsidePath, manifestPath)) {
+      assertRejected(targetRoot, /plugin\.json must not be a symbolic link/);
+    }
+  });
+  await context.test('linked manifest outside the plugin root', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    if (trySymlink(subtest, pluginPath(targetRoot, 'plugin.json'), path.join(targetRoot, 'plugin.json'))) {
+      assertRejected(targetRoot, /^- plugin\.json is plugin content outside/m);
+    }
+  });
+});
+
+test('validator rejects hard-linked plugin files', (context) => {
+  const targetRoot = createRepositoryCopy(context);
+  linkSync(pluginPath(targetRoot, 'README.md'), path.join(targetRoot, 'linked-readme.md'));
+  assertRejected(targetRoot, /plugins\/ai-team-orchestration\/README\.md must not be hard-linked/);
 });
 
 test('formal workflow references are not part of the lightweight skill', (context) => {
   const targetRoot = createRepositoryCopy(context);
   for (const fileName of ['delivery-workflow.md', 'safe-git-values.md']) {
     assert.equal(
-      readFileSync(pluginPath(targetRoot, 'skills', 'ai-team-orchestration', 'SKILL.md'), 'utf8')
-        .includes(fileName),
+      readFileSync(pluginPath(targetRoot, ...SKILL, 'SKILL.md'), 'utf8').includes(fileName),
       false,
     );
   }

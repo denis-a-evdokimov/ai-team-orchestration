@@ -24,10 +24,10 @@ npm test
 The validator checks:
 
 - the Agent Plugins 1.0 manifest fields and `$schema`;
-- the exact file set of the plugin root, the three agent files and the one skill;
-- the constrained frontmatter fields, the stable agent IDs and the skill name;
-- that no plugin manifest, skill or agent file exists outside the plugin root;
-- relative Markdown links, and that plugin Markdown links stay inside the plugin root;
+- the exact file set of the plugin root: regular files only, with no links, hard links or extra files;
+- the constrained frontmatter fields, the stable agent IDs, the `include-custom-instructions: true` agent setting and the skill name;
+- that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
+- local Markdown links, and that plugin Markdown links point only to files in the plugin root;
 - legacy agent references.
 
 It does not claim full YAML or JSON Schema validation. The Awesome Copilot gates stay authoritative for a catalog listing. The tests run the validator against temporary copies of this repository.
@@ -51,14 +51,31 @@ For packaging or content changes, test the plugin root with GitHub Copilot CLI b
 
 ### Install check for a release commit
 
-Before a catalog entry points at a commit, install that commit through a temporary marketplace. Use an isolated Copilot home, so that the check does not change your own installation. Set `COPILOT_HOME` to an empty folder. On Windows, also point `USERPROFILE`, `LOCALAPPDATA`, and `COPILOT_CACHE_HOME` at empty folders.
+Before a catalog entry points at a commit, install that commit through a temporary marketplace. Run the check in a new shell process with an isolated Copilot home. Then the check does not change your own installation.
 
-1. Write a `marketplace.json` file in an empty folder. The plugin entry uses the full commit SHA and the version from `plugin.json`:
+1. Start a new PowerShell process, for example `pwsh -NoProfile`. Point the home, cache and configuration folders at an empty temporary folder:
+
+   ```powershell
+   $iso = Join-Path ([IO.Path]::GetTempPath()) 'copilot-release-check'
+   $env:USERPROFILE = $iso
+   $env:HOME = $iso
+   $env:COPILOT_HOME = "$iso\.copilot"
+   $env:COPILOT_CACHE_HOME = "$iso\cache"
+   $env:LOCALAPPDATA = "$iso\AppData\Local"
+   $env:APPDATA = "$iso\AppData\Roaming"
+   $env:XDG_CONFIG_HOME = "$iso\.config"
+   $env:XDG_CACHE_HOME = "$iso\.cache"
+   $env:XDG_DATA_HOME = "$iso\.local\share"
+   $env:XDG_STATE_HOME = "$iso\.local\state"
+   ```
+
+   On Linux and macOS, set `HOME`, `COPILOT_HOME` and the `XDG_*` folders in the same way. The [Awesome Copilot install smoke gate](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/.github/scripts/external-plugins/external-plugin-quality-gates.mjs#L435-L480) sets `HOME` and the XDG folders on Linux.
+2. Write `$iso\marketplace\marketplace.json`. The plugin entry uses the full commit SHA and the version from `plugin.json`:
 
    ```json
    {
      "name": "release-check",
-     "owner": { "name": "Denis Evdokimov" },
+     "owner": { "name": "Release check" },
      "plugins": [
        {
          "name": "ai-team-orchestration",
@@ -75,22 +92,32 @@ Before a catalog entry points at a commit, install that commit through a tempora
    }
    ```
 
-2. Install the plugin:
+3. Install the plugin:
 
-   ```text
-   copilot plugin marketplace add <marketplace-folder>
+   ```powershell
+   copilot plugin marketplace add "$iso\marketplace"
    copilot plugin install ai-team-orchestration@release-check
    ```
 
-3. Before you start Copilot CLI again, compare `<COPILOT_HOME>/installed-plugins/release-check/ai-team-orchestration` with `plugins/ai-team-orchestration` at that commit. The file set and the file contents after line-ending normalization must be equal. Copilot CLI 1.0.114 removes this copy at its next start, because the marketplace is a local folder.
+4. Compare the installed folder with the plugin root at that commit. Run the commands in your checkout:
 
-The Awesome Copilot [external plugin gates](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346) run the same kind of install check, and also check the manifest and run `vally lint`.
+   ```powershell
+   git archive --format=tar --output="$iso\release.tar" <full commit SHA> plugins/ai-team-orchestration
+   tar -xf "$iso\release.tar" -C $iso
+   git diff --no-index --ignore-cr-at-eol --stat "$iso\plugins\ai-team-orchestration" "$env:COPILOT_HOME\installed-plugins\release-check\ai-team-orchestration"
+   ```
 
+   No output and exit code 0 mean that the file sets and the file contents are equal.
+5. Close the shell process, and delete the temporary folder.
+
+Do the comparison before you run another Copilot CLI command. In our test, Copilot CLI 1.0.114 removed the installed copy at its next start. The marketplace was a local folder, and the plugin source was a GitHub repository.
+
+The Awesome Copilot [external plugin gates](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346) run the same kind of install check. They also check the manifest and run `vally lint`.
 ## Release
 
 1. Change the plugin in `plugins/ai-team-orchestration/`. Set a new SemVer `version` in `plugin.json`.
 2. Run the local validation and the smoke test.
-3. Merge the pull request with a merge commit. The merge commit on `main` is the release. This repository does not use tags.
+3. The repository owner merges the pull request with a merge commit. The merge commit on `main` is the release. This repository does not use tags.
 4. Run the install check for the merge commit.
 
-A catalog entry, for example in Awesome Copilot, pins the plugin with `source.path` `plugins/ai-team-orchestration`, the full merge commit SHA, and the same version. A change to the Awesome Copilot entry needs Denis's approval and follows the public Awesome Copilot workflow.
+A catalog entry, for example in Awesome Copilot, pins the plugin with `source.path` `plugins/ai-team-orchestration`, the full merge commit SHA, and the same version. A change to the Awesome Copilot entry needs the repository owner's approval and follows the public Awesome Copilot workflow.

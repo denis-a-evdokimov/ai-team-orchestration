@@ -15,7 +15,7 @@ export function tryLstat(filePath) {
   }
 }
 
-export function sameFilesystemPath(left, right) {
+function sameFilesystemPath(left, right) {
   const normalizedLeft = path.resolve(left);
   const normalizedRight = path.resolve(right);
   return process.platform === 'win32'
@@ -33,7 +33,7 @@ export function isContainedPath(rootPath, candidatePath, allowRoot = true) {
     && !path.isAbsolute(relativePath);
 }
 
-export function validatePortableRelativePath(portablePath, label) {
+function validatePortableRelativePath(portablePath, label) {
   if (typeof portablePath !== 'string' || portablePath.length === 0) {
     throw new Error(`${label} must be a non-empty relative path.`);
   }
@@ -78,18 +78,12 @@ export function createRootInfo(rootPath, label) {
   };
 }
 
-export function resolveManagedPath(rootInfo, portablePath, label = portablePath) {
+function assertSafeManagedPath(rootInfo, portablePath, label) {
   const parts = validatePortableRelativePath(portablePath, label);
   const resolvedPath = path.resolve(rootInfo.path, ...parts);
   if (!isContainedPath(rootInfo.path, resolvedPath, false)) {
     throw new Error(`${label} resolves outside ${rootInfo.label}: ${portablePath}`);
   }
-  return resolvedPath;
-}
-
-export function assertSafeManagedPath(rootInfo, portablePath, label = portablePath) {
-  const parts = validatePortableRelativePath(portablePath, label);
-  const resolvedPath = resolveManagedPath(rootInfo, portablePath, label);
   const rootStat = tryLstat(rootInfo.path);
   if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new Error(`${rootInfo.label} changed into a missing or linked path.`);

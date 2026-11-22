@@ -7,13 +7,13 @@ This repository is the source and the distribution of the AI Team Orchestration 
 The following rules are invariants:
 
 - Keep exactly one copy of the plugin content, in the plugin root. Do not add generated copies, generators or export tooling.
-- The plugin root contains only `plugin.json`, `README.md`, `com.github.copilot/` and `skills/`.
+- The plugin root contains exactly the files in `PLUGIN_FILES` in `eng/validate.mjs`: `plugin.json`, `README.md`, the three agent files and the skill with its four references. All are regular files, with no links or hard links. To add or remove a plugin file, update that list in the same change.
 - `plugin.json` uses the Agent Plugins 1.0 `$schema` and only Agent Plugins 1.0 fields. The plugin name is `ai-team-orchestration`.
 - The skill folder is `skills/ai-team-orchestration`, and its `SKILL.md` frontmatter name is exactly `ai-team-orchestration`.
 - The stable agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`. Each agent file is `com.github.copilot/agents/<id>.md`.
-- The three bundled agents intentionally omit the optional `tools` and `model` fields so they inherit the user's enabled built-in, MCP, and extension tools and use the developer's selected model. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist or model pin without an explicit compatibility decision.
+- The three bundled agents intentionally omit the optional `tools` and `model` fields. Thus they inherit the user's enabled built-in, Model Context Protocol (MCP), and extension tools. They also use the developer's selected model. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist or model pin without an explicit compatibility decision.
 - The three bundled agents set `include-custom-instructions: true`. Clients that support this field, for example Copilot CLI 1.0.86 or later, then also give the repository instruction files to an agent that runs as a subagent. `npm run validate` requires this field. Do not remove it without an explicit compatibility decision.
-- Markdown files in the plugin root link only to files in the plugin root. Installed copies do not contain other repository files.
+- Local file links in plugin Markdown point only to files in the plugin root. Installed copies do not contain other repository files. Use full URLs for other targets.
 
 `eng/validate.mjs` enforces these invariants.
 
@@ -25,7 +25,7 @@ The following rules are invariants:
 | Repository only, never installed | Root `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `LICENSE`, `package.json`, `docs/`, `eng/`, and `.github/` |
 | Awesome Copilot | The catalog entry for this plugin in `github/awesome-copilot` and its generated outputs |
 
-Do not change Awesome Copilot from this repository. A change to its catalog entry needs Denis's approval and follows the public Awesome Copilot workflow.
+Do not change Awesome Copilot from this repository. A change to its catalog entry needs the repository owner's approval and follows the public Awesome Copilot workflow.
 
 ## Workflow rules
 

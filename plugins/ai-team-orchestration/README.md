@@ -56,6 +56,32 @@ Focus on important behavior and regressions. Report Ready, Ready with minor
 follow-ups, or Blocked with reproducible findings.
 ```
 
+## Delegation and Repository Instructions
+
+You can select a team agent yourself, for example `@ai-team-dev`. Then it follows your custom instructions as usual.
+
+Another agent can also delegate work to a team agent. Then the team agent runs as a subagent. In Copilot CLI and the GitHub Copilot app, a custom agent that runs as a subagent does not get the repository instruction files by default, for example `AGENTS.md` or `.github/copilot-instructions.md`.
+
+The team agents set `include-custom-instructions: true`. This setting tells the client to give the repository instruction files also to a team agent that runs as a subagent. Support for the setting depends on the client:
+
+| Client | Repository instructions in a team subagent |
+| --- | --- |
+| Copilot CLI 1.0.86 or later | Yes. The Copilot CLI documentation describes this setting. |
+| Copilot CLI before 1.0.86 | No. These versions do not support the setting. |
+| GitHub Copilot app | Expected. In our tests with app 1.4.3 (Copilot runtime 1.0.106), a project agent with this setting got the files. We did not test the installed plugin yet. |
+| VS Code | Do not rely on the setting. VS Code does not forward it when it converts agent files. Check how subagents get instructions in the harness that you use. |
+
+If you start Copilot CLI with `--no-custom-instructions`, no agent gets the repository instruction files. This setting does not change that.
+
+In our tests with the GitHub Copilot app 1.4.3 (Copilot runtime 1.0.106), rules from plugins did not reach the tested subagents, with or without this setting.
+
+If a delegated task must follow a rule that the subagent does not get:
+
+- Put the rule in the delegation prompt.
+- Or select the team agent yourself for the task.
+
+The Dev and Producer instructions also tell these agents to read the repository instructions when they start work. This helps, but it is not a guarantee.
+
 ## Principles
 
 - Producer coordinates but never implements application code.
