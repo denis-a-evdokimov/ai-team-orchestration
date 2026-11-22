@@ -209,6 +209,8 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['reference definition in angle brackets', '[License][a]\n\n[a]: <../../LICENSE>', /links outside plugins\/ai-team-orchestration/],
     ['destination in angle brackets', '[License](<LICENSE>)', /unresolved relative Markdown link: LICENSE/],
     ['parent path in a code span', 'Do not write `../../LICENSE` here.', /README\.md contains a parent-directory path/],
+    ['bare parent segment in a code span', 'Do not write `[Parent](..)` here.', /README\.md contains a parent-directory path/],
+    ['link after an indented fence with a flush-left closer', '  ```\ncode\n```\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['encoded parent path', 'See %2E%2E%2fLICENSE and &#46;&#46;&#47;x.', /README\.md contains a parent-directory path/],
   ]) {
     await context.test(name, (subtest) => {
@@ -246,6 +248,12 @@ test('validator reports broken repository links without failing', async (context
   await context.test('ignores a fenced example with CRLF line endings', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '~~~\r\n[x](./not-a-file.md)\r\n~~~\r\n\r\n## Pull requests');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
+  });
+  await context.test('ignores a definition inside a multi-line code span', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '`a\n[a]: ./not-a-file.md\nb`\n\n## Pull requests');
     const result = runValidator(targetRoot);
     assert.equal(result.status, 0, result.stderr);
   });

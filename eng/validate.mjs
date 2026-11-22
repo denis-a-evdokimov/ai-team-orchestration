@@ -57,7 +57,8 @@ const URL_ATTRIBUTES = new Set(['action', 'background', 'cite', 'data', 'formact
 // is percent-encoded or written as an HTML character reference.
 const ENCODED_DOT = String.raw`(?:\.|%2e|&#0*46;|&#x0*2e;|&period;)`;
 const ENCODED_SLASH = String.raw`(?:[\\/]|%2f|%5c|&#0*47;|&#x0*2f;|&sol;|&#0*92;|&#x0*5c;|&bsol;)`;
-const PARENT_PATH = new RegExp(`${ENCODED_DOT}${ENCODED_DOT}${ENCODED_SLASH}`, 'i');
+// A parent segment is `..` that is not part of a longer name, followed by a slash or by the end of a path.
+const PARENT_PATH = new RegExp(String.raw`(?<![\w.~%;-])${ENCODED_DOT}${ENCODED_DOT}(?=${ENCODED_SLASH}|[)\]>"'\s#?]|$)`, 'im');
 const ROOT_RELATIVE_PATH = new RegExp(String.raw`(?:\]\(\s*<?|\]:\s*<?|=\s*["']?)${ENCODED_SLASH}(?!${ENCODED_SLASH})`, 'i');
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
@@ -506,41 +507,51 @@ function validateSingleCopy(inventory, payload) {
   }
 }
 
-// Blanks fenced code blocks in one pass, in source order. A closing fence uses the
-// character of the opening fence, is at least as long, and has nothing after it.
-// A fence in a list item also ends with its item: at a line that is less indented than
-// the opening fence. A fence that this scan does not detect leaves its text checked.
+// Blanks fenced code blocks in one pass, in source order. A closing fence uses the character of
+// the opening fence, is at least as long, and has nothing after it. A non-blank line that is less
+// indented than the opening fence can end a list item and its fence. Then the pairing of fences is
+// uncertain, so the scan stops blanking for the rest of the text: it may check code, but it never
+// hides a link.
 function withoutFencedCode(markdown) {
   let fence = null;
+  let uncertain = false;
   return markdown.split('\n').map((line) => {
-    const marker = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
-    const indent = /^ */.exec(line)[0].length;
-    if (fence !== null && line.trim() !== '' && indent < fence.indent) {
+    const marker = uncertain ? null : /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence !== null) {
+      if (marker && marker[2][0] === fence.marker[0] && marker[2].length >= fence.marker.length && marker[3].trim() === '') {
+        fence = null;
+        return '';
+      }
+      if (line.trim() === '' || /^ */.exec(line)[0].length >= fence.indent) {
+        return '';
+      }
       fence = null;
+      uncertain = true;
+      return line;
     }
-    if (fence === null) {
-      const opens = marker && !(marker[2][0] === '`' && marker[3].includes('`'));
-      fence = opens ? { marker: marker[2], indent: marker[1].length } : null;
-      return opens ? '' : line;
+    if (marker && !(marker[2][0] === '`' && marker[3].includes('`'))) {
+      fence = { marker: marker[2], indent: marker[1].length };
+      return '';
     }
-    if (marker && marker[2][0] === fence.marker[0] && marker[2].length >= fence.marker.length && marker[3].trim() === '') {
-      fence = null;
-    }
-    return '';
+    return line;
   }).join('\n');
 }
 
 const HTML_TAG_AT = /<[A-Za-z][A-Za-z0-9-]*((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>/y;
+const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
+const BACKTICK_RUN_AT = /`+/y;
 const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const INLINE_LINK = /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g;
 // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
 const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm;
 
-// Returns the end of the code span that starts at `start`, or -1. A code span does not cross a blank line.
-function codeSpanEnd(text, start, runLength) {
-  const blankLine = /\n[ \t]*\n/g;
-  blankLine.lastIndex = start;
-  const limit = blankLine.exec(text)?.index ?? text.length;
+// Returns the positions of the blank lines that end paragraphs. A code span does not cross one.
+function paragraphEnds(text) {
+  return [...text.matchAll(/\n[ \t]*\n/g)].map((match) => match.index);
+}
+
+// Returns the end of the code span that starts at `start`, or -1.
+function codeSpanEnd(text, start, runLength, limit) {
   const backtickRuns = /`+/g;
   backtickRuns.lastIndex = start + runLength;
   for (let run = backtickRuns.exec(text); run && run.index < limit; run = backtickRuns.exec(text)) {
@@ -551,41 +562,50 @@ function codeSpanEnd(text, start, runLength) {
   return -1;
 }
 
-// Scans inline text in source order, as CommonMark does: a link destination in angle brackets
-// stays a destination, an HTML tag that starts first keeps its attributes, a code span that starts
-// first hides the markup inside it, and an escaped character stays literal.
-// Returns the text without code spans and tags, and the tag attributes.
-function scanInline(text) {
-  const tags = [];
-  let visible = '';
-  let index = 0;
-  while (index < text.length) {
-    HTML_TAG_AT.lastIndex = index;
-    const tag = text[index] === '<' ? HTML_TAG_AT.exec(text) : null;
-    const runLength = text[index] === '`' ? /^`+/.exec(text.slice(index))[0].length : 0;
-    const spanEnd = runLength ? codeSpanEnd(text, index, runLength) : -1;
-    const destination = text[index] === '<' && /\]\(\s*$/.test(visible) ? /^<[^<>\n]*>/.exec(text.slice(index)) : null;
-    if (destination) {
-      visible += destination[0];
-      index += destination[0].length;
-    } else if (tag) {
-      tags.push(tag[1]);
-      visible += ' ';
-      index = HTML_TAG_AT.lastIndex;
-    } else if (text[index] === '\\') {
-      visible += text.slice(index, index + 2);
-      index += 2;
-    } else if (runLength) {
-      visible += spanEnd === -1 ? text.slice(index, index + runLength) : ' ';
-      index = spanEnd === -1 ? index + runLength : spanEnd;
-    } else {
-      visible += text[index];
-      index += 1;
-    }
-  }
-  return { visible, tags };
+function matchAt(pattern, text, index) {
+  pattern.lastIndex = index;
+  return pattern.exec(text);
 }
 
+// Scans inline text in source order, as CommonMark does: a link or reference destination in angle
+// brackets stays a destination, an HTML tag that starts first keeps its attributes, a code span
+// that starts first hides the markup inside it, and an escaped character stays literal.
+// Returns the text without code spans and tags, and the tag attributes.
+function scanInline(text) {
+  const ends = paragraphEnds(text);
+  const tags = [];
+  const visible = [];
+  let destinationExpected = false;
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    const destination = character === '<' && destinationExpected ? matchAt(ANGLE_DESTINATION_AT, text, index) : null;
+    const tag = character === '<' && !destination ? matchAt(HTML_TAG_AT, text, index) : null;
+    const run = character === '`' ? matchAt(BACKTICK_RUN_AT, text, index)[0] : '';
+    const limit = run ? ends.find((end) => end > index) ?? text.length : 0;
+    const spanEnd = run ? codeSpanEnd(text, index, run.length, limit) : -1;
+    let consumed = character;
+    if (destination || (run && spanEnd === -1)) {
+      consumed = destination ? destination[0] : run;
+      visible.push(consumed);
+    } else if (tag || run) {
+      consumed = tag ? tag[0] : text.slice(index, spanEnd);
+      if (tag) {
+        tags.push(tag[1]);
+      }
+      visible.push(' ');
+    } else {
+      consumed = character === '\\' ? text.slice(index, index + 2) : character;
+      visible.push(consumed);
+    }
+    const previous = index > 0 ? text[index - 1] : '';
+    destinationExpected = consumed.length === 1 && previous === ']' && (character === '(' || character === ':')
+      ? true
+      : destinationExpected && /^\s$/.test(consumed);
+    index += consumed.length;
+  }
+  return { visible: visible.join(''), tags };
+}
 // Reads the candidate URLs of a srcset value. A URL can contain commas, for example a data URL.
 function srcsetUrls(value) {
   const urls = [];
@@ -617,12 +637,10 @@ function attributeDestinations(attributes) {
 }
 
 function markdownDestinations(markdown) {
-  const withoutFences = withoutFencedCode(markdown.replace(/\r\n?/g, '\n'));
-  const { visible, tags } = scanInline(withoutFences);
+  const { visible, tags } = scanInline(withoutFencedCode(markdown.replace(/\r\n?/g, '\n')));
   const destinations = tags.flatMap(attributeDestinations);
-  // Reference definitions are blocks, so they are read before the inline scan.
-  for (const [text, pattern] of [[withoutFences, REFERENCE_DEFINITION], [visible, INLINE_LINK]]) {
-    for (const match of text.matchAll(pattern)) {
+  for (const pattern of [REFERENCE_DEFINITION, INLINE_LINK]) {
+    for (const match of visible.matchAll(pattern)) {
       destinations.push(match[1]);
     }
   }

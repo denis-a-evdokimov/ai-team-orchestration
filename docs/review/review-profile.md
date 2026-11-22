@@ -58,6 +58,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 - A plugin-root file outside the allowlist, or a second copy of plugin content, is a BLOCKER.
 - A weakened validator check without a stated reason is at least MAJOR.
+- A link that the Markdown scanner misses is MINOR when the fail-closed path checks still keep it inside the plugin root. A form that leaves the plugin root despite those checks is MAJOR.
 
 ## Lens weighting
 
@@ -67,5 +68,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 770 lines after #18; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 780 lines after #18; each function within a complexity of 10 - **watch**
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**
