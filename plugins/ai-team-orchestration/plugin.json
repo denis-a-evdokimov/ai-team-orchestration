@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ai-team-orchestration",
   "description": "Run a lightweight, role-separated AI development team with flexible tools, developer-selected models, proportionate planning, and optional QA.",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "keywords": [
     "ai-team",
     "multi-agent",

@@ -337,6 +337,11 @@ test('validator keeps the installed file set exact', async (context) => {
     rmSync(pluginPath(targetRoot, ...SKILL, 'references', 'anti-patterns.md'));
     assertRejected(targetRoot, /references\/anti-patterns\.md is missing or is not a regular file/);
   });
+  await context.test('missing third-party notice', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    rmSync(pluginPath(targetRoot, ...SKILL, 'NOTICE'));
+    assertRejected(targetRoot, /skills\/ai-team-orchestration\/NOTICE is missing or is not a regular file/);
+  });
   await context.test('directory in place of README.md', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     const readmePath = pluginPath(targetRoot, 'README.md');
@@ -362,6 +367,42 @@ test('validator keeps the installed file set exact', async (context) => {
     const manifestPath = pluginPath(targetRoot, 'plugin.json');
     writeFileSync(manifestPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(manifestPath)]));
     assertRejected(targetRoot, /plugin\.json must not start with a UTF-8 byte order mark/);
+  });
+});
+
+test('validator requires the license notice for the upstream material', async (context) => {
+  const noticePath = (targetRoot) => pluginPath(targetRoot, ...SKILL, 'NOTICE');
+  const licensePath = (targetRoot) => path.join(targetRoot, 'LICENSE');
+  const grant = 'Permission is hereby granted';
+  // Keeps the text up to the grant, with or without the grant itself.
+  const truncate = (filePath, keepGrant) => {
+    const contents = readFileSync(filePath, 'utf8');
+    assert.ok(contents.includes(grant), `Fixture text not found: ${grant}`);
+    writeFileSync(filePath, contents.slice(0, contents.indexOf(grant) + (keepGrant ? grant.length : 0)), 'utf8');
+  };
+  for (const [name, mutate, pattern] of [
+    ['notice without the GitHub copyright line', (root) => mutateText(noticePath(root), 'Copyright GitHub, Inc.', ''), /NOTICE must have the line "Copyright GitHub, Inc\."/],
+    ['notice with a changed permission notice', (root) => mutateText(noticePath(root), 'and/or sell', 'or sell'), /NOTICE must end with the complete MIT permission notice/],
+    ['notice with a legacy agent mention', (root) => mutateText(noticePath(root), 'Third-party notices', `Third-party notices @${'producer'}`), new RegExp(`NOTICE contains legacy agent mention "@${'producer'}"`)],
+    ['LICENSE without the GitHub copyright line', (root) => mutateText(licensePath(root), 'Copyright GitHub, Inc. (portions;', 'Copyright (c) GitHub (portions;'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE with a wrong notice path', (root) => mutateText(licensePath(root), 'ai-team-orchestration/NOTICE)', 'ai-team-orchestration/LICENSE)'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE with a suffix after the notice path', (root) => mutateText(licensePath(root), 'ai-team-orchestration/NOTICE)', 'ai-team-orchestration/NOTICE.bak)'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE line that GitHub does not detect', (root) => mutateText(licensePath(root), grant, `Portions Copyright GitHub, Inc.\n\n${grant}`), /LICENSE line "Portions Copyright GitHub, Inc\." must be the title or start with "Copyright"/],
+    ['LICENSE without a permission notice', (root) => truncate(licensePath(root), false), /^- LICENSE must end with the complete MIT permission notice\.$/m],
+    ['LICENSE with the grant joined to a copyright line', (root) => writeFileSync(licensePath(root), readFileSync(licensePath(root), 'utf8').replace(/\r?\n\s*Permission is hereby granted/, ' Permission is hereby granted'), 'utf8'), /^- LICENSE must end with the complete MIT permission notice\.$/m],
+    ['LICENSE and notice truncated in the same way', (root) => { truncate(licensePath(root), true); truncate(noticePath(root), true); }, /^- LICENSE must end with the complete MIT permission notice\.$[\s\S]*NOTICE must end with the complete MIT permission notice/m],
+  ]) {
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutate(targetRoot);
+      assertRejected(targetRoot, pattern);
+    });
+  }
+  await context.test('accepts a rewrapped permission notice', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mutateText(licensePath(targetRoot), `${grant}, free of charge,`, 'Permission is hereby\ngranted, free of charge,');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
   });
 });
 

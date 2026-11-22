@@ -7,7 +7,8 @@ This repository is the source and the distribution of the AI Team Orchestration 
 The following rules are invariants:
 
 - Keep exactly one copy of the plugin content, in the plugin root. Do not add generated copies, generators or export tooling.
-- The plugin root contains exactly the files in `PLUGIN_FILES` in `eng/validate.mjs`: `plugin.json`, `README.md`, the three agent files and the skill with its four references. All are regular UTF-8 files, with no links or hard links. To add or remove a plugin file, update that list in the same change.
+- The plugin root contains exactly the files in `PLUGIN_FILES` in `eng/validate.mjs`: `plugin.json`, `README.md`, the three agent files, and the skill with its four references and its `NOTICE`. All are regular UTF-8 files, with no links or hard links. To add or remove a plugin file, update that list in the same change.
+- The skill folder keeps `NOTICE`. It gives the MIT notice of GitHub, Inc. for the material that [github/awesome-copilot#2946](https://github.com/github/awesome-copilot/pull/2946) added to the four references. A skill install copies only the skill folder, so the notice stays there. A copyright line in the root `LICENSE` points to it, and `npm run validate` checks both. Above the permission notice, `LICENSE` has only the title, blank lines and lines that start with `Copyright`. In a test, another line made GitHub report "Other" instead of the MIT License. Material from another source needs its notice in `NOTICE` too. [ADR 0002](./docs/decisions/0002-third-party-notice.md) records this decision.
 - `plugin.json` uses the Agent Plugins 1.0 `$schema` and only Agent Plugins 1.0 fields. The plugin name is `ai-team-orchestration`.
 - The skill folder is `skills/ai-team-orchestration`, and its `SKILL.md` frontmatter name is exactly `ai-team-orchestration`.
 - The stable agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`. Each agent file is `com.github.copilot/agents/<id>.md`.

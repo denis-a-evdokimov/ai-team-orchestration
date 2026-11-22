@@ -7,6 +7,7 @@ This folder holds the architecture decision records (ADRs) of this repository. E
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0001](./0001-agent-plugins-layout.md) | Distribute the plugin as one Agent Plugins 1.0 package | Accepted |
+| [0002](./0002-third-party-notice.md) | Ship the license notice for upstream material in the skill folder | Accepted |
 
 ## Rules
 

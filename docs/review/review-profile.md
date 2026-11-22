@@ -20,6 +20,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - The agent IDs are `ai-team-dev`, `ai-team-producer` and `ai-team-qa`, in `com.github.copilot/agents/<id>.md`.
 - The skill is `skills/ai-team-orchestration`, with the frontmatter name `ai-team-orchestration`.
 - The agents omit `tools` and `model`, and set `include-custom-instructions: true`.
+- The skill folder keeps `NOTICE` with the MIT notice of GitHub, Inc. for the material from github/awesome-copilot#2946 in the references. Material from another source needs its notice there too. See ADR 0002.
 - A change to guidance content is a separate, deliberate change. A packaging change keeps the content byte-identical after line-ending normalization.
 - No change to other repositories, including `github/awesome-copilot`, from this repository.
 
@@ -31,7 +32,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 ## Scale context
 
-- About ten plugin files and one validator of about 790 lines. Performance is not a material risk.
+- Eleven plugin files and one validator of about 850 lines. Performance is not a material risk.
 
 ## Privacy and end-user identifiable information (EUII) surface
 
@@ -41,7 +42,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 ## Accepted trade-offs (do not report again)
 
-- `LICENSE` exists only at the repository root, not in the plugin root: one copy, and the installed file set equals the former native install. Accepted in #18.
+- The repository `LICENSE` exists only at the repository root, not in the plugin root: one copy. Installs carry only the third-party `NOTICE` in the skill folder. Accepted in #18; the notice came with ADR 0002.
 - No tags or GitHub releases: the merge commit on `main` is the release locator. Accepted in #18.
 - The validator implements the needed Agent Plugins 1.0 manifest rules without a JSON Schema library. Accepted in #18.
 - The plugin `README.md` is the user README: the marketplace description and the delegation guidance. The root `README.md` serves repository visitors and links to the plugin README. Accepted in #18.
@@ -53,6 +54,9 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - Validator checks that compare names but not entry types, links, hard links or nested paths.
 - Link extraction uses regular expressions on the raw text, not a Markdown or HTML parser. When it changes, test link forms in code, URL attributes outside well-formed tags, character references, backslash escapes and reference definitions in containers. Do not make plugin Markdown extraction skip code: a skip that differs from a client parser hides links. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
 - A version change that is missing from `plugin.json` when the plugin root changes.
+- Material from another repository without its license notice in the skill `NOTICE`. Installs never contain the root `LICENSE`.
+- A `LICENSE` line above the permission notice that is not the title, not blank, and does not start with `Copyright`. In a test, GitHub then reported "Other" instead of MIT. The validator rejects it.
+- A license check that compares two editable copies. Equal copies can both be incomplete. The validator pins the MIT permission notice by SHA-256.
 
 ## Severity calibration
 
@@ -68,5 +72,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 790 lines after #18; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 850 lines after #19 (about 790 after #18); each function within a complexity of 10 - **escalate**: split it by concern (payload, manifest, links, license) before the next new check
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**
