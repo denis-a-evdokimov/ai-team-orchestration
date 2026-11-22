@@ -82,7 +82,7 @@ Before a catalog entry points at a commit, install that commit through a tempora
    copilot plugin install ai-team-orchestration@release-check
    ```
 
-3. Compare the installed folder with `plugins/ai-team-orchestration` at that commit. The file set and the file contents after line-ending normalization must be equal.
+3. Before you start Copilot CLI again, compare `<COPILOT_HOME>/installed-plugins/release-check/ai-team-orchestration` with `plugins/ai-team-orchestration` at that commit. The file set and the file contents after line-ending normalization must be equal. Copilot CLI 1.0.114 removes this copy at its next start, because the marketplace is a local folder.
 
 The Awesome Copilot [external plugin gates](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346) run the same kind of install check, and also check the manifest and run `vally lint`.
 
