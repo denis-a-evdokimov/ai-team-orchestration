@@ -519,8 +519,11 @@ const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
 const ESCAPABLE = /[!-/:-@[-`{-~]/;
 // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
 const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm;
-// A file URL or an absolute Windows path. It never points into an installed plugin.
-const LOCAL_FILE_DESTINATION = /^(?:file:|[A-Za-z]:[\\/])/i;
+// An autolink, such as `<https://example.com>`. Its content is literal.
+const AUTOLINK = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
+// A file URL or a Windows drive path, also a drive-relative one such as `C:notes.md`. It never points
+// into an installed plugin.
+const LOCAL_FILE_DESTINATION = /^(?:file:|[A-Za-z]:)/i;
 
 // Returns the end of an inline link destination without angle brackets. It ends at white space or
 // at a `)` that closes no `(`. An escaped parenthesis does not count.
@@ -573,38 +576,45 @@ function srcsetUrls(value) {
 
 // Named character references that can change a path.
 const NAMED_REFERENCES = new Map(Object.entries({
-  amp: '&', apos: "'", bsol: '\\', colon: ':', gt: '>', lt: '<', newline: '\n', num: '#',
+  amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', gt: '>', lt: '<', newline: '\n', num: '#',
   percnt: '%', period: '.', quest: '?', quot: '"', sol: '/', tab: '\t',
 }));
+// A character reference. A browser also decodes numeric references with more digits than CommonMark.
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9A-Fa-f]+)|([A-Za-z][A-Za-z0-9]{1,31}));/g;
 // A backslash escape or a character reference. A Markdown client decodes both in one pass.
-// A browser also decodes numeric references with more digits.
 const ESCAPE_OR_REFERENCE = /\\([!-/:-@[-`{-~])|&(?:#(\d+)|#[xX]([0-9A-Fa-f]+)|([A-Za-z][A-Za-z0-9]{1,31}));/g;
 
+function decodeReference(reference, decimal, hex, name) {
+  if (name !== undefined) {
+    return NAMED_REFERENCES.get(name.toLowerCase()) ?? reference;
+  }
+  const codePoint = Number.parseInt(decimal ?? hex, decimal === undefined ? 16 : 10);
+  return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\uFFFD';
+}
+
+// HTML decodes character references only. A backslash stays.
+function decodeHtml(text) {
+  return text.replace(CHARACTER_REFERENCE, decodeReference);
+}
+
 function unescapeMarkdown(text) {
-  return text.replace(ESCAPE_OR_REFERENCE, (match, escaped, decimal, hex, name) => {
-    if (escaped !== undefined) {
-      return escaped;
-    }
-    if (name !== undefined) {
-      return NAMED_REFERENCES.get(name.toLowerCase()) ?? match;
-    }
-    const codePoint = Number.parseInt(decimal ?? hex, decimal === undefined ? 16 : 10);
-    return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\uFFFD';
-  });
+  return text.replace(ESCAPE_OR_REFERENCE, (match, escaped, decimal, hex, name) => (
+    escaped === undefined ? decodeReference(match, decimal, hex, name) : escaped));
 }
 
 function attributeDestinations(text) {
   return [...text.matchAll(URL_ATTRIBUTE)].flatMap((match) => {
     // A browser decodes character references before it splits srcset candidates.
-    const value = unescapeMarkdown(match[2] ?? match[3] ?? match[4]);
+    const value = decodeHtml(match[2] ?? match[3] ?? match[4]);
     return match[1].toLowerCase() === 'srcset' ? srcsetUrls(value) : [value];
   });
 }
 
 function markdownLinkDestinations(text) {
   const definitions = [...text.matchAll(REFERENCE_DEFINITION)].map((match) => match[1]);
-  return [...definitions, ...inlineDestinations(text)].map((destination) => unescapeMarkdown(
+  const destinations = [...definitions, ...inlineDestinations(text)].map((destination) => unescapeMarkdown(
     destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination));
+  return [...destinations, ...[...text.matchAll(AUTOLINK)].map((match) => match[1])];
 }
 
 // Every link form counts, also in a code example. Thus an example uses an existing target or a full URL.
@@ -692,7 +702,7 @@ function validateMarkdownLinks(inventory, payload) {
 
 function validatePayloadPaths(payload) {
   for (const [relativePath, text] of [...payload].filter(([file]) => file.endsWith('.md'))) {
-    const contents = `${text}\n${unescapeMarkdown(text)}`;
+    const contents = `${text}\n${decodeHtml(text)}\n${unescapeMarkdown(text)}`;
     if (PARENT_PATH.test(contents)) {
       addError(`${payloadLabel(relativePath)} contains a parent-directory path, which can leave the installed plugin. Plugin Markdown must not contain one, also not in code.`);
     }

@@ -219,7 +219,10 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['attribute value with encoded line breaks', '<div>\n<img src=".&#10;./.&#10;./LICENSE">\n</div>', /links outside plugins\/ai-team-orchestration/],
     ['destination with an escaped parenthesis', '[License](README.md\\)/../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['file URL with outer white space', '<a href=" file:///LICENSE ">License</a>', /README\.md has a local file link, which installed copies cannot resolve: file:\/\/\/LICENSE/],
+    ['file URL in an autolink', '<file:///LICENSE>', /README\.md has a local file link, which installed copies cannot resolve: file:\/\/\/LICENSE/],
+    ['HTML link to a Windows path with an escaped-looking dot', '<a href="C:\\.cache\\notes.md">Notes</a>', /README\.md has a local file link, which installed copies cannot resolve: C:\\\.cache\\notes\.md/],
     ['srcset candidate after an encoded comma', '<img srcset="README.md 1x&#44;/root.png 2x" alt="">', /root-relative link/],
+    ['srcset candidate after a named comma reference', '<img srcset="README.md 1x&comma;/root.png 2x" alt="">', /root-relative link/],
     ['destination with nested parentheses', '[Missing](((draft)).md)', /unresolved relative Markdown link: \(\(draft\)\)\.md/],
   ]) {
     await context.test(name, (subtest) => {
