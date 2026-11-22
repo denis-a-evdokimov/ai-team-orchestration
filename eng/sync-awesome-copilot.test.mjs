@@ -220,7 +220,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.equal(initialCheck.aligned, false);
   assert.equal(initialCheck.sourceHead, runGit(sourceRoot, 'rev-parse', 'HEAD'));
   assert.equal(initialCheck.targetHead, runGit(fixture.targetRoot, 'rev-parse', 'HEAD'));
-  assert.equal(initialCheck.pluginVersion, '2.0.0');
+  assert.equal(initialCheck.pluginVersion, '2.1.0');
   assert.ok(initialCheck.drift.some((item) => item.kind === 'missing'));
   assert.ok(initialCheck.drift.some((item) => item.kind === 'changed'));
   assert.ok(initialCheck.drift.some((item) => item.kind === 'extra'
@@ -235,7 +235,7 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.match(driftCli.stdout, /managed drift item/);
   assert.match(driftCli.stdout, /Source HEAD: [a-f0-9]{40,64}/);
   assert.match(driftCli.stdout, /Target HEAD: [a-f0-9]{40,64}/);
-  assert.match(driftCli.stdout, /Plugin version: 2\.0\.0/);
+  assert.match(driftCli.stdout, /Plugin version: 2\.1\.0/);
 
   const logs = [];
   const writeResult = syncAwesomeCopilot({
@@ -247,8 +247,14 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.equal(writeResult.aligned, true);
   assert.ok(logs.includes(`Source HEAD: ${writeResult.sourceHead}`));
   assert.ok(logs.includes(`Target HEAD: ${writeResult.targetHead}`));
-  assert.ok(logs.includes('Plugin version: 2.0.0'));
+  assert.ok(logs.includes('Plugin version: 2.1.0'));
   assert.equal(existsSync(path.join(fixture.targetSkillRoot, 'stale.txt')), false);
+  for (const agentId of AGENT_IDS) {
+    assert.match(
+      readFileSync(path.join(fixture.targetRoot, 'agents', `${agentId}.agent.md`), 'utf8'),
+      /^include-custom-instructions: true$/m,
+    );
+  }
   assert.match(
     readFileSync(path.join(fixture.targetSkillRoot, 'SKILL.md'), 'utf8'),
     /^---\nname: ai-team-orchestration\n/,

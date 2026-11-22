@@ -60,6 +60,17 @@ test('bundled agents intentionally omit tools and model', (context) => {
   }
 });
 
+test('bundled agents opt in to repository instructions as subagents', (context) => {
+  for (const replacement of ['', 'include-custom-instructions: false']) {
+    const targetRoot = createRepositoryCopy(context);
+    const agentPath = path.join(targetRoot, 'agents', 'ai-team-qa.agent.md');
+    mutateText(agentPath, 'include-custom-instructions: true', replacement);
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must contain exactly "include-custom-instructions: true"/);
+  }
+});
+
 test('validator enforces the three stable agent IDs', (context) => {
   const targetRoot = createRepositoryCopy(context);
   const agentPath = path.join(targetRoot, 'agents', 'ai-team-dev.agent.md');

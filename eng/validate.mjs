@@ -223,7 +223,7 @@ function validateAgents() {
       addError(`${repoPath(filePath)} must be a non-hard-linked regular file.`);
       continue;
     }
-    const fields = parseFrontmatter(filePath, new Set(['name', 'description']));
+    const fields = parseFrontmatter(filePath, new Set(['name', 'description', 'include-custom-instructions']));
     if (!fields) {
       continue;
     }
@@ -239,6 +239,10 @@ function validateAgents() {
     const description = quotedValue(fields.get('description'));
     if (description === null || description.trim() === '' || description.length > DESCRIPTION_MAX_LENGTH) {
       addError(`${repoPath(filePath)} frontmatter description must be matching-quoted, non-empty, and no longer than ${DESCRIPTION_MAX_LENGTH} characters.`);
+    }
+
+    if (fields.get('include-custom-instructions') !== 'true') {
+      addError(`${repoPath(filePath)} frontmatter must contain exactly "include-custom-instructions: true".`);
     }
   }
 

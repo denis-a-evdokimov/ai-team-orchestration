@@ -83,6 +83,29 @@ The bundled agents intentionally omit `tools` and `model` frontmatter.
 
 If too many tools are enabled, deselect irrelevant tools or MCP servers, or configure `github.copilot.chat.virtualTools.threshold`. Do not copy a machine-specific tool list into the plugin.
 
+## Delegation and Repository Instructions
+
+You can select a team agent yourself, for example `@ai-team-dev`. Then it follows your custom instructions as usual.
+
+Another agent can also delegate work to a team agent. Then the team agent runs as a subagent. In Copilot CLI and the GitHub Copilot app, a custom agent that runs as a subagent does not get the repository instruction files by default, for example `AGENTS.md` or `.github/copilot-instructions.md`.
+
+The team agents set `include-custom-instructions: true`. With this setting, they also get the repository instruction files as subagents.
+
+| Client | Repository instructions in a team subagent |
+| --- | --- |
+| Copilot CLI 1.0.86 or later, or the GitHub Copilot app with Copilot runtime 1.0.86 or later | Yes |
+| Earlier CLI or runtime versions | No. These versions do not support the setting. |
+| VS Code | VS Code does not forward the setting when it converts agent files. Check how subagents get instructions in the harness that you use. |
+
+In our tests with Copilot runtime 1.0.106, rules from plugins did not reach subagents, even with this setting.
+
+If a delegated task must follow a rule that the subagent does not get:
+
+- Put the rule in the delegation prompt.
+- Or select the team agent yourself for the task.
+
+The Dev and Producer instructions also tell these agents to read the repository instructions when they start work. This helps, but it is not a guarantee.
+
 ## Customization
 
 Keep the stable agent IDs:
