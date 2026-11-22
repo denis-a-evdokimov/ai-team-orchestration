@@ -4,7 +4,7 @@
 - Date: 2026-11-22
 - Decided by: Denis (approved plan: "use the installed layout, keep one copy, and rename the source skill to ai-team-orchestration")
 - Review: see the pull request `## Review` section
-- Links: pull request that adds this ADR; content alignment in #16
+- Links: #18; content alignment in #16
 
 ## Context
 
