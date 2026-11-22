@@ -28,6 +28,7 @@ The validator checks:
 - the constrained frontmatter fields, the stable agent IDs, the `include-custom-instructions: true` agent setting and the skill name;
 - that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
 - local Markdown links, and that plugin Markdown links point only to files in the plugin root;
+- that plugin Markdown has no parent-directory path and no root-relative link target, also not in code;
 - legacy agent references.
 
 It does not claim full YAML or JSON Schema validation. The Awesome Copilot gates stay authoritative for a catalog listing. The tests run the validator against temporary copies of this repository.

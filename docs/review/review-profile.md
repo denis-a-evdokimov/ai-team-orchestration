@@ -51,7 +51,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 - Documentation that claims an install route or a client behavior without verification or a citation. Keep command-line interface (CLI) discovery, catalog installation and client compatibility as separate claims, each with the client version that was tested.
 - Validator checks that compare names but not entry types, links, hard links or nested paths.
-- Link extraction is a scanner, not a full Markdown parser. When it changes, test fenced code of both kinds, code spans, HTML attributes, reference definitions in containers and escaped characters.
+- Link extraction is a scanner, not a full Markdown parser. When it changes, test fenced code of both kinds, code spans, HTML attributes, reference definitions in containers and escaped characters. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
 - A version change that is missing from `plugin.json` when the plugin root changes.
 
 ## Severity calibration
@@ -67,5 +67,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 750 lines after #18; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 770 lines after #18; each function within a complexity of 10 - **watch**
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**

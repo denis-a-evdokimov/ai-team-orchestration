@@ -52,6 +52,13 @@ const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 // O_NONBLOCK keeps a named pipe from blocking the open on POSIX systems.
 const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 const URL_ATTRIBUTES = new Set(['action', 'background', 'cite', 'data', 'formaction', 'href', 'poster', 'src', 'srcset', 'xlink:href']);
+// Fail-closed path checks for plugin Markdown. They read the whole text, code included, so that
+// no link syntax can hide a path that leaves the installed plugin. Each form also matches when it
+// is percent-encoded or written as an HTML character reference.
+const ENCODED_DOT = String.raw`(?:\.|%2e|&#0*46;|&#x0*2e;|&period;)`;
+const ENCODED_SLASH = String.raw`(?:[\\/]|%2f|%5c|&#0*47;|&#x0*2f;|&sol;|&#0*92;|&#x0*5c;|&bsol;)`;
+const PARENT_PATH = new RegExp(`${ENCODED_DOT}${ENCODED_DOT}${ENCODED_SLASH}`, 'i');
+const ROOT_RELATIVE_PATH = new RegExp(String.raw`(?:\]\(\s*<?|\]:\s*<?|=\s*["']?)${ENCODED_SLASH}(?!${ENCODED_SLASH})`, 'i');
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
   'SKILL.md',
@@ -688,6 +695,17 @@ function validateMarkdownLinks(inventory, payload) {
   }
 }
 
+function validatePayloadPaths(payload) {
+  for (const [relativePath, contents] of [...payload].filter(([file]) => file.endsWith('.md'))) {
+    if (PARENT_PATH.test(contents)) {
+      addError(`${payloadLabel(relativePath)} contains a parent-directory path, which can leave the installed plugin. Plugin Markdown must not contain one, also not in code.`);
+    }
+    if (ROOT_RELATIVE_PATH.test(contents)) {
+      addError(`${payloadLabel(relativePath)} contains a root-relative link target, which installed copies cannot resolve.`);
+    }
+  }
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -735,6 +753,7 @@ validateSkill(payload);
 const inventory = walkRepository(REPO_ROOT, '', { entries: [], files: new Set(), directories: new Set() });
 validateSingleCopy(inventory, payload);
 validateMarkdownLinks(inventory, payload);
+validatePayloadPaths(payload);
 validateLegacyReferences(inventory, payload);
 
 if (errors.length > 0) {

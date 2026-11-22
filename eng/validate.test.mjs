@@ -208,6 +208,8 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['link after a fence in a list item', '- Item\n  ```\n  code\n- [License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['reference definition in angle brackets', '[License][a]\n\n[a]: <../../LICENSE>', /links outside plugins\/ai-team-orchestration/],
     ['destination in angle brackets', '[License](<LICENSE>)', /unresolved relative Markdown link: LICENSE/],
+    ['parent path in a code span', 'Do not write `../../LICENSE` here.', /README\.md contains a parent-directory path/],
+    ['encoded parent path', 'See %2E%2E%2fLICENSE and &#46;&#46;&#47;x.', /README\.md contains a parent-directory path/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
