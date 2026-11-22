@@ -223,6 +223,8 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['file URL in an autolink with a nonbreaking space', '<file:///my\u00A0notes.md>', /README\.md has a local file link, which installed copies cannot resolve: file:\/\/\/my\u00A0notes\.md/],
     ['unquoted attribute value with a nonbreaking space', '<img src=README.md\u00A0/.&#10;./.&#10;./LICENSE>', /links outside plugins\/ai-team-orchestration/],
     ['destination with a nonbreaking space', '[License](README.md\u00A0/../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['HTML link with a trailing nonbreaking space', '<a href="README.md\u00A0">x</a>', /unresolved relative Markdown link: README\.md\u00A0/],
+    ['destination with a leading nonbreaking space', '[x](\u00A0README.md)', /unresolved relative Markdown link: \u00A0README\.md/],
     ['HTML link to a Windows path with an escaped-looking dot', '<a href="C:\\.cache\\notes.md">Notes</a>', /README\.md has a local file link, which installed copies cannot resolve: C:\\\.cache\\notes\.md/],
     ['srcset candidate after an encoded comma', '<img srcset="README.md 1x&#44;/root.png 2x" alt="">', /root-relative link/],
     ['srcset candidate after a named comma reference', '<img srcset="README.md 1x&comma;/root.png 2x" alt="">', /root-relative link/],
@@ -237,6 +239,7 @@ test('validator rejects plugin links that leave the installed payload', async (c
   for (const [name, text] of [
     ['data URL in srcset', '<img srcset="data:image/png;base64,AAAA 1x" alt="">'],
     ['full URL with an attribute name in its path', 'See https://example.com/src=icon for details.'],
+    ['full URL with a nonbreaking space before an attribute-like path', '<https://example.com/a\u00A0b/src=icon>'],
   ]) {
     await context.test(`ignores a ${name}`, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);

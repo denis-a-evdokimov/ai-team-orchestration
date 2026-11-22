@@ -513,9 +513,10 @@ function validateSingleCopy(inventory, payload) {
 // only at ASCII white space or `>`. A name in the path of a full URL, as in `https://example.com/src=x`,
 // is not an attribute. A link ends only at ASCII white space or an ASCII control character, never at
 // other white space such as U+00A0. Thus the end patterns do not use `\s`.
-const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
+const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\x00-\x20"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
 const HTML_TAG = /<[A-Za-z](?:[^<>"']|"[^"]*"|'[^']*')*>/g;
-const INLINE_LINK_START = /\]\(\s*/g;
+// CommonMark allows spaces, tabs and one line break before a destination.
+const INLINE_LINK_START = /\]\([ \t]*(?:\n[ \t]*)?/g;
 const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
 const ESCAPABLE = /[!-/:-@[-`{-~]/;
 const DESTINATION_END = /[\x00-\x20\x7F]/;
@@ -620,16 +621,29 @@ function markdownLinkDestinations(text) {
   return [...destinations, ...[...text.matchAll(AUTOLINK)].map((match) => match[1])];
 }
 
+// Returns a target as a URL parser reads it: without tabs and line breaks, and without ASCII control
+// characters and spaces at its ends. Other white space, such as U+00A0, stays.
+function urlParserView(destination) {
+  const value = destination.replace(/[\t\n\r]/g, '');
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) <= 0x20) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
 // Every link form counts, also in a code example. Thus an example uses an existing target or a full URL.
 // Repository Markdown reads URL attributes only in HTML tags, so that code such as `data = x` is not a link.
-// Returns each target as a URL parser reads it: without tabs, line breaks and outer white space.
 function markdownDestinations(markdown, inPlugin) {
   const text = markdown.replace(/\r\n?/g, '\n');
   const attributes = inPlugin
     ? attributeDestinations(text)
     : [...text.matchAll(HTML_TAG)].flatMap((tag) => attributeDestinations(tag[0]));
-  return [...attributes, ...markdownLinkDestinations(text)]
-    .map((destination) => destination.replace(/[\t\n\r]/g, '').trim());
+  return [...attributes, ...markdownLinkDestinations(text)].map(urlParserView);
 }
 
 function isExternalDestination(destination) {
