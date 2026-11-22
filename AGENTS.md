@@ -10,7 +10,7 @@ The following identities are invariants:
 - The Awesome Copilot target skill is `skills/ai-team-orchestration`, with exported frontmatter name `ai-team-orchestration`.
 - The stable shared agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`.
 - The three bundled agents intentionally omit the optional `tools` and `model` fields so they inherit the user's enabled built-in, MCP, and extension tools and use the developer's selected model. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist or model pin without an explicit compatibility decision.
-- The three bundled agents set `include-custom-instructions: true`, so they also get the repository instruction files when another agent delegates to them as subagents. `npm run validate` requires this field. Do not remove it without an explicit compatibility decision.
+- The three bundled agents set `include-custom-instructions: true`. Clients that support this field, for example Copilot CLI 1.0.86 or later, then also give the repository instruction files to an agent that runs as a subagent. `npm run validate` requires this field. Do not remove it without an explicit compatibility decision.
 - The standalone plugin manifest remains at the repository root as `plugin.json`.
 
 The exporter produces content-equivalent managed files after LF normalization. The only semantic adaptation is the skill frontmatter `name`, from `ai-team` to `ai-team-orchestration`; opaque unknown assets remain byte-preserved. The standalone and Awesome copies are therefore not required to be byte-identical. Do not rename the standalone skill to match the target.

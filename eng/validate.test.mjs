@@ -61,7 +61,12 @@ test('bundled agents intentionally omit tools and model', (context) => {
 });
 
 test('bundled agents opt in to repository instructions as subagents', (context) => {
-  for (const replacement of ['', 'include-custom-instructions: false']) {
+  for (const replacement of [
+    '',
+    'include-custom-instructions: false',
+    'include-custom-instructions:true',
+    'include-custom-instructions: \u00a0true',
+  ]) {
     const targetRoot = createRepositoryCopy(context);
     const agentPath = path.join(targetRoot, 'agents', 'ai-team-qa.agent.md');
     mutateText(agentPath, 'include-custom-instructions: true', replacement);

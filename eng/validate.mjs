@@ -82,13 +82,13 @@ function parseFrontmatter(filePath, allowedFields) {
     if (lines[index].trim() === '') {
       continue;
     }
-    const match = /^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(lines[index]);
+    const match = /^([A-Za-z][A-Za-z0-9-]*):(?:[ \t]+(.*))?$/.exec(lines[index]);
     if (!match) {
       addError(`${repoPath(filePath)} contains unsupported frontmatter syntax: ${lines[index]}`);
       continue;
     }
 
-    const [, key, value] = match;
+    const [, key, value = ''] = match;
     if (fields.has(key)) {
       addError(`${repoPath(filePath)} has duplicate frontmatter field "${key}".`);
       continue;
@@ -97,7 +97,7 @@ function parseFrontmatter(filePath, allowedFields) {
       addError(`${repoPath(filePath)} contains unsupported frontmatter field "${key}".`);
       continue;
     }
-    fields.set(key, value.trim());
+    fields.set(key, value.replace(/[ \t]+$/, ''));
   }
 
   return fields;

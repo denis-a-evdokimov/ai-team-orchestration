@@ -250,9 +250,10 @@ test('check, write, repeated write, and provenance are deterministic', (context)
   assert.ok(logs.includes('Plugin version: 2.1.0'));
   assert.equal(existsSync(path.join(fixture.targetSkillRoot, 'stale.txt')), false);
   for (const agentId of AGENT_IDS) {
-    assert.match(
-      readFileSync(path.join(fixture.targetRoot, 'agents', `${agentId}.agent.md`), 'utf8'),
-      /^include-custom-instructions: true$/m,
+    const agentPath = path.join('agents', `${agentId}.agent.md`);
+    assert.equal(
+      readFileSync(path.join(fixture.targetRoot, agentPath), 'utf8'),
+      readFileSync(path.join(sourceRoot, agentPath), 'utf8').replace(/\r\n?/g, '\n'),
     );
   }
   assert.match(
