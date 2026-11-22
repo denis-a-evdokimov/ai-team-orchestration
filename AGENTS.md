@@ -1,40 +1,39 @@
 # Repository Instructions
 
-## Canonical ownership
+## Plugin package
 
-This standalone repository is the canonical source for AI Team Orchestration. Change the canonical agents, skill, and plugin metadata here first; then export the managed subset to an Awesome Copilot checkout. Never make a target-only content fix and leave the canonical source behind.
+This repository is the source and the distribution of the AI Team Orchestration plugin. The plugin root is `plugins/ai-team-orchestration/`. It is an Agent Plugins 1.0 package. An install copies this folder, so the folder contains only plugin files. [ADR 0001](./docs/decisions/0001-agent-plugins-layout.md) records this decision.
 
-The following identities are invariants:
+The following rules are invariants:
 
-- The standalone skill folder is `skills/ai-team`, and its `SKILL.md` frontmatter name is exactly `ai-team`.
-- The Awesome Copilot target skill is `skills/ai-team-orchestration`, with exported frontmatter name `ai-team-orchestration`.
-- The stable shared agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`.
+- Keep exactly one copy of the plugin content, in the plugin root. Do not add generated copies, generators or export tooling.
+- The plugin root contains only `plugin.json`, `README.md`, `com.github.copilot/` and `skills/`.
+- `plugin.json` uses the Agent Plugins 1.0 `$schema` and only Agent Plugins 1.0 fields. The plugin name is `ai-team-orchestration`.
+- The skill folder is `skills/ai-team-orchestration`, and its `SKILL.md` frontmatter name is exactly `ai-team-orchestration`.
+- The stable agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`. Each agent file is `com.github.copilot/agents/<id>.md`.
 - The three bundled agents intentionally omit the optional `tools` and `model` fields so they inherit the user's enabled built-in, MCP, and extension tools and use the developer's selected model. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist or model pin without an explicit compatibility decision.
 - The three bundled agents set `include-custom-instructions: true`. Clients that support this field, for example Copilot CLI 1.0.86 or later, then also give the repository instruction files to an agent that runs as a subagent. `npm run validate` requires this field. Do not remove it without an explicit compatibility decision.
-- The standalone plugin manifest remains at the repository root as `plugin.json`.
+- Markdown files in the plugin root link only to files in the plugin root. Installed copies do not contain other repository files.
 
-The exporter produces content-equivalent managed files after LF normalization. The only semantic adaptation is the skill frontmatter `name`, from `ai-team` to `ai-team-orchestration`; opaque unknown assets remain byte-preserved. The standalone and Awesome copies are therefore not required to be byte-identical. Do not rename the standalone skill to match the target.
+`eng/validate.mjs` enforces these invariants.
 
 ## File ownership boundaries
 
 | Ownership | Files |
 | --- | --- |
-| Canonical, synchronized from this repository | The three files under `agents/`; the complete `skills/ai-team/` tree; configured plugin fields listed in `eng/awesome-copilot-sync.json` |
-| Standalone-only | Root documentation; the root plugin location and its non-managed fields; `AGENTS.md`, `CONTRIBUTING.md`, `package.json`, and `eng/` |
-| Awesome-owned | Target plugin `README.md`, target plugin repository URL, `agents` and `skills` paths, and every target plugin field not listed as managed |
-| Awesome build/publication-owned | Every output generated or materialized by Awesome's build and publication automation |
+| Plugin package, installed by users | `plugins/ai-team-orchestration/` |
+| Repository only, never installed | Root `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `LICENSE`, `package.json`, `docs/`, `eng/`, and `.github/` |
+| Awesome Copilot | The catalog entry for this plugin in `github/awesome-copilot` and its generated outputs |
 
-Do not add generated or Awesome-owned files to the synchronization manifest. Maintain the target plugin README in Awesome for its marketplace audience; do not overwrite it from this repository. Do not hand-edit generated outputs to make a check pass.
+Do not change Awesome Copilot from this repository. A change to its catalog entry needs Denis's approval and follows the public Awesome Copilot workflow.
 
 ## Workflow rules
 
-1. Work only on feature branches in both repositories. Never write or push directly to `main`.
-2. Follow the canonical-workflow-first rule: edit here, validate here, export, run Awesome validation/build, and open an Awesome PR targeting `main`.
-3. Keep synchronization one-way. The Awesome checkout is never imported into this repository.
-4. Keep `eng/awesome-copilot-sync.json` portable and minimal; absolute paths are forbidden.
-5. Do not commit, push, create branches, or open pull requests from the synchronization script.
+1. Work only on feature branches. Never write or push directly to `main`.
+2. Change the plugin only in `plugins/ai-team-orchestration/`.
+3. Give each change to the plugin root a new `version` in `plugin.json`.
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full release and smoke-test procedure.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the smoke test and the release procedure.
 
 ## Validation commands
 
@@ -44,14 +43,3 @@ Run before proposing a change:
 npm run validate
 npm test
 ```
-
-Check or write an Awesome Copilot checkout explicitly:
-
-```text
-npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
-```
-
-`AWESOME_COPILOT_ROOT` may replace `--target`. Both check and prepare require this canonical source to be committed, clean, and attached to a feature branch with no staged changes, and require the target to be attached to a non-`main`, non-`staged` branch. Prepare mode additionally requires a clean target Git worktree.
-
-The target must have a direct fetched `refs/remotes/upstream/main` ref that is an ancestor of feature-branch `HEAD`, with no symbolic ref or graft spoofing. Prepare mode generates and verifies a binary Git patch in a private temporary no-hardlink clone and never applies it to the target. The user rechecks the checkout, applies the patch explicitly, and reruns `awesome:check`.

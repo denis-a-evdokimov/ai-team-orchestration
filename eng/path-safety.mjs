@@ -96,7 +96,7 @@ export function assertSafeManagedPath(rootInfo, portablePath, label = portablePa
   }
   const currentRootRealPath = realpathSync(rootInfo.path);
   if (!sameFilesystemPath(currentRootRealPath, rootInfo.realPath)) {
-    throw new Error(`${rootInfo.label} changed its real path during synchronization.`);
+    throw new Error(`${rootInfo.label} changed its real path during validation.`);
   }
   let currentPath = rootInfo.path;
 
@@ -127,15 +127,6 @@ export function assertManagedDirectory(rootInfo, portablePath, label = portableP
   const targetStat = tryLstat(absolutePath);
   if (!targetStat || !targetStat.isDirectory()) {
     throw new Error(`${label} must be an existing directory.`);
-  }
-  return absolutePath;
-}
-
-export function assertManagedRegularFile(rootInfo, portablePath, label = portablePath) {
-  const absolutePath = assertSafeManagedPath(rootInfo, portablePath, label);
-  const targetStat = tryLstat(absolutePath);
-  if (!targetStat || !targetStat.isFile()) {
-    throw new Error(`${label} must be an existing regular file.`);
   }
   return absolutePath;
 }

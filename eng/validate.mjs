@@ -3,7 +3,6 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
-  statSync,
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,17 +10,42 @@ import { fileURLToPath } from 'node:url';
 import {
   assertManagedDirectory,
   createRootInfo,
+  isContainedPath,
 } from './path-safety.mjs';
-import {
-  assertCanonicalSyncManifest,
-  CANONICAL_AGENT_IDS,
-  CANONICAL_MANAGED_PLUGIN_FIELDS,
-  CANONICAL_PLUGIN_TARGET,
-} from './sync-manifest-contract.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXPECTED_AGENT_IDS = CANONICAL_AGENT_IDS;
-const EXPECTED_MANAGED_PLUGIN_FIELDS = CANONICAL_MANAGED_PLUGIN_FIELDS;
+const PLUGIN_NAME = 'ai-team-orchestration';
+const SKILL_NAME = 'ai-team-orchestration';
+const PLUGIN_ROOT_PATH = `plugins/${PLUGIN_NAME}`;
+const PLUGIN_ROOT = path.join(REPO_ROOT, ...PLUGIN_ROOT_PATH.split('/'));
+const AGENTS_PATH = `${PLUGIN_ROOT_PATH}/com.github.copilot/agents`;
+const SKILLS_PATH = `${PLUGIN_ROOT_PATH}/skills`;
+const EXPECTED_AGENT_IDS = Object.freeze([
+  'ai-team-dev',
+  'ai-team-producer',
+  'ai-team-qa',
+]);
+// The plugin root is the installed payload; anything else here would be installed too.
+const EXPECTED_PLUGIN_ROOT_ENTRIES = Object.freeze([
+  'README.md',
+  'com.github.copilot',
+  'plugin.json',
+  'skills',
+]);
+const AGENT_PLUGIN_SCHEMA_URL = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
+const AGENT_PLUGIN_FIELDS = new Set([
+  '$schema',
+  'name',
+  'version',
+  'description',
+  'author',
+  'homepage',
+  'repository',
+  'license',
+  'keywords',
+  'extensions',
+]);
+const AGENT_PLUGIN_AUTHOR_FIELDS = new Set(['name', 'email', 'url']);
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
 const DESCRIPTION_MAX_LENGTH = 1024;
 const SKILL_FILE_MAX_BYTES = 5 * 1024 * 1024;
@@ -52,7 +76,7 @@ function readJson(filePath, label) {
     return JSON.parse(readFileSync(filePath, 'utf8'));
   } catch (error) {
     addError(`${label} is not valid JSON: ${error.message}`);
-    return null;
+    return undefined;
   }
 }
 
@@ -121,38 +145,65 @@ function quotedValue(value) {
   return match ? match[2] : null;
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
 function validatePlugin() {
-  const pluginPath = path.join(REPO_ROOT, 'plugin.json');
-  const plugin = readJson(pluginPath, 'plugin.json');
-  if (!plugin) {
+  const label = `${PLUGIN_ROOT_PATH}/plugin.json`;
+  const pluginPath = path.join(PLUGIN_ROOT, 'plugin.json');
+  if (!existsSync(pluginPath)) {
+    addError(`${label} is missing.`);
+    return null;
+  }
+  const plugin = readJson(pluginPath, label);
+  if (plugin === undefined) {
+    return null;
+  }
+  if (!plugin || typeof plugin !== 'object' || Array.isArray(plugin)) {
+    addError(`${label} must contain a JSON object.`);
     return null;
   }
 
-  const requiredStringFields = [
-    'name',
-    'description',
-    'version',
-    'repository',
-    'license',
-    'skills',
-    'agents',
-  ];
-  for (const field of requiredStringFields) {
-    if (typeof plugin[field] !== 'string' || plugin[field].trim() === '') {
-      addError(`plugin.json field "${field}" must be a non-empty string.`);
+  for (const field of Object.keys(plugin)) {
+    if (!AGENT_PLUGIN_FIELDS.has(field)) {
+      addError(`${label} top-level field "${field}" is not part of Agent Plugins 1.0.`);
     }
   }
+  if (plugin.$schema !== AGENT_PLUGIN_SCHEMA_URL) {
+    addError(`${label} field "$schema" must be exactly "${AGENT_PLUGIN_SCHEMA_URL}".`);
+  }
+  if (plugin.name !== PLUGIN_NAME) {
+    addError(`${label} field "name" must be exactly "${PLUGIN_NAME}".`);
+  }
 
-  if (typeof plugin.name === 'string'
-    && (plugin.name.length > 50 || !SLUG_PATTERN.test(plugin.name))) {
-    addError('plugin.json field "name" must be a lowercase slug no longer than 50 characters.');
+  for (const field of ['description', 'version', 'repository', 'license']) {
+    if (!isNonEmptyString(plugin[field])) {
+      addError(`${label} field "${field}" must be a non-empty string.`);
+    }
   }
   if (typeof plugin.description === 'string'
     && plugin.description.length > 500) {
-    addError('plugin.json field "description" must not exceed 500 characters.');
+    addError(`${label} field "description" must not exceed 500 characters.`);
   }
   if (!SEMVER_PATTERN.test(plugin.version ?? '')) {
-    addError(`plugin.json version "${plugin.version ?? ''}" is not valid SemVer.`);
+    addError(`${label} version "${plugin.version ?? ''}" is not valid SemVer.`);
+  }
+  if (isNonEmptyString(plugin.repository)
+    && !plugin.repository.startsWith('https://github.com/')) {
+    addError(`${label} field "repository" must be an https://github.com/ URL.`);
+  }
+  if (plugin.homepage !== undefined && !isNonEmptyString(plugin.homepage)) {
+    addError(`${label} field "homepage" must be a non-empty string when present.`);
+  }
+  if (plugin.extensions !== undefined
+    && (!plugin.extensions
+      || typeof plugin.extensions !== 'object'
+      || Array.isArray(plugin.extensions)
+      || Object.values(plugin.extensions).some((value) => !value
+        || typeof value !== 'object'
+        || Array.isArray(value)))) {
+    addError(`${label} field "extensions" must map namespaces to objects.`);
   }
 
   if (!Array.isArray(plugin.keywords)
@@ -162,62 +213,78 @@ function validatePlugin() {
       || keyword.length < 1
       || keyword.length > 30
       || !SLUG_PATTERN.test(keyword))) {
-    addError('plugin.json field "keywords" must contain 1-10 lowercase slugs no longer than 30 characters.');
+    addError(`${label} field "keywords" must contain 1-10 lowercase slugs no longer than 30 characters.`);
   }
 
-  const validAuthor = (typeof plugin.author === 'string' && plugin.author.trim() !== '')
-    || (plugin.author
-      && typeof plugin.author === 'object'
-      && typeof plugin.author.name === 'string'
-      && plugin.author.name.trim() !== '');
+  const author = plugin.author;
+  const validAuthor = author
+    && typeof author === 'object'
+    && !Array.isArray(author)
+    && isNonEmptyString(author.name)
+    && Object.entries(author).every(([field, value]) => AGENT_PLUGIN_AUTHOR_FIELDS.has(field)
+      && typeof value === 'string');
   if (!validAuthor) {
-    addError('plugin.json field "author" must be a non-empty string or an object with a non-empty name.');
-  }
-
-  let rootInfo = null;
-  try {
-    rootInfo = createRootInfo(REPO_ROOT, 'Repository root');
-  } catch (error) {
-    addError(error.message);
-  }
-  for (const field of ['skills', 'agents']) {
-    if (typeof plugin[field] !== 'string' || plugin[field].trim() === '') {
-      continue;
-    }
-
-    if (plugin[field] !== `${field}/`) {
-      addError(`plugin.json field "${field}" must be exactly "${field}/".`);
-      continue;
-    }
-    if (rootInfo) {
-      try {
-        assertManagedDirectory(rootInfo, field, `plugin.json field "${field}"`);
-      } catch (error) {
-        addError(error.message);
-      }
-    }
+    addError(`${label} field "author" must be an object with a non-empty name and only string name, email, and url fields.`);
   }
 
   return plugin;
 }
 
+function sameEntries(directoryPath, expectedNames, label) {
+  const actualNames = readdirSync(directoryPath).sort();
+  if (!sameArray(actualNames, [...expectedNames].sort())) {
+    addError(`${label} must contain exactly: ${[...expectedNames].sort().join(', ')}; found: ${actualNames.join(', ') || '(none)'}.`);
+    return false;
+  }
+  return true;
+}
+
+function validatePluginLayout() {
+  let rootInfo;
+  try {
+    rootInfo = createRootInfo(REPO_ROOT, 'Repository root');
+    for (const directory of [
+      PLUGIN_ROOT_PATH,
+      `${PLUGIN_ROOT_PATH}/com.github.copilot`,
+      AGENTS_PATH,
+      SKILLS_PATH,
+    ]) {
+      assertManagedDirectory(rootInfo, directory, directory);
+    }
+  } catch (error) {
+    addError(error.message);
+    return false;
+  }
+
+  sameEntries(PLUGIN_ROOT, EXPECTED_PLUGIN_ROOT_ENTRIES, PLUGIN_ROOT_PATH);
+  sameEntries(path.join(PLUGIN_ROOT, 'com.github.copilot'), ['agents'], `${PLUGIN_ROOT_PATH}/com.github.copilot`);
+  return true;
+}
+
+function validateSingleCopy(files) {
+  const agentFileNames = new Set(EXPECTED_AGENT_IDS.flatMap((id) => [`${id}.md`, `${id}.agent.md`]));
+  for (const filePath of files) {
+    if (isContainedPath(PLUGIN_ROOT, filePath, false)) {
+      continue;
+    }
+    const fileName = path.basename(filePath);
+    if (fileName === 'plugin.json'
+      || fileName === 'SKILL.md'
+      || fileName.endsWith('.agent.md')
+      || agentFileNames.has(fileName)) {
+      addError(`${repoPath(filePath)} is plugin content outside ${PLUGIN_ROOT_PATH}; keep exactly one copy in the plugin root.`);
+    }
+  }
+}
+
 function validateAgents() {
-  const agentsDirectory = path.join(REPO_ROOT, 'agents');
-  if (!existsSync(agentsDirectory) || !statSync(agentsDirectory).isDirectory()) {
-    addError('Required agents/ directory is missing.');
-    return [];
-  }
-  const agentFiles = readdirSync(agentsDirectory)
-    .filter((fileName) => fileName.endsWith('.agent.md'))
-    .sort();
-  const actualIds = agentFiles.map((fileName) => fileName.slice(0, -'.agent.md'.length));
-
-  if (!sameArray(actualIds, EXPECTED_AGENT_IDS)) {
-    addError(`agents/ must contain exactly these agent IDs: ${EXPECTED_AGENT_IDS.join(', ')}; found: ${actualIds.join(', ') || '(none)'}.`);
+  const agentsDirectory = path.join(REPO_ROOT, ...AGENTS_PATH.split('/'));
+  if (!sameEntries(agentsDirectory, EXPECTED_AGENT_IDS.map((id) => `${id}.md`), AGENTS_PATH)) {
+    return;
   }
 
-  for (const fileName of agentFiles) {
-    const filePath = path.join(agentsDirectory, fileName);
+  for (const fileId of EXPECTED_AGENT_IDS) {
+    const filePath = path.join(agentsDirectory, `${fileId}.md`);
     const fileStat = lstatSync(filePath);
     if (!fileStat.isFile() || fileStat.isSymbolicLink() || fileStat.nlink !== 1) {
       addError(`${repoPath(filePath)} must be a non-hard-linked regular file.`);
@@ -228,7 +295,6 @@ function validateAgents() {
       continue;
     }
 
-    const fileId = fileName.slice(0, -'.agent.md'.length);
     const frontmatterName = quotedValue(fields.get('name'));
     if (frontmatterName === null) {
       addError(`${repoPath(filePath)} frontmatter name must be quoted.`);
@@ -245,8 +311,6 @@ function validateAgents() {
       addError(`${repoPath(filePath)} frontmatter must contain exactly "include-custom-instructions: true".`);
     }
   }
-
-  return actualIds;
 }
 
 function validateSkillTree(skillDirectory) {
@@ -271,57 +335,48 @@ function validateSkillTree(skillDirectory) {
 }
 
 function validateSkills() {
-  const skillsDirectory = path.join(REPO_ROOT, 'skills');
-  if (!existsSync(skillsDirectory) || !statSync(skillsDirectory).isDirectory()) {
-    addError('Required skills/ directory is missing.');
-    return [];
-  }
-  const skillNames = readdirSync(skillsDirectory, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  for (const folderName of skillNames) {
-    if (!SLUG_PATTERN.test(folderName) || folderName.length > 64) {
-      addError(`skills/${folderName} folder name must be a lowercase slug no longer than 64 characters.`);
-    }
-    const skillDirectory = path.join(skillsDirectory, folderName);
-    validateSkillTree(skillDirectory);
-    const skillPath = path.join(skillDirectory, 'SKILL.md');
-    if (!existsSync(skillPath)) {
-      addError(`skills/${folderName} is missing SKILL.md.`);
-      continue;
-    }
-
-    const fields = parseFrontmatter(skillPath, new Set(['name', 'description']));
-    if (!fields) {
-      continue;
-    }
-
-    const frontmatterName = scalarValue(fields.get('name'));
-    if (!frontmatterName) {
-      addError(`${repoPath(skillPath)} must have a non-empty frontmatter name.`);
-    } else if (frontmatterName !== folderName) {
-      addError(`${repoPath(skillPath)} frontmatter name "${frontmatterName}" must match folder name "${folderName}".`);
-    }
-    if (folderName === 'ai-team') {
-      const lines = readFileSync(skillPath, 'utf8').replace(/\r\n?/g, '\n').split('\n');
-      const closingIndex = lines.indexOf('---', 1);
-      const nameLines = lines
-        .slice(1, closingIndex)
-        .filter((line) => /^\s*name\s*:/.test(line));
-      if (nameLines.length !== 1 || nameLines[0] !== 'name: ai-team') {
-        addError(`${repoPath(skillPath)} canonical frontmatter name line must be exactly "name: ai-team".`);
-      }
-    }
-
-    const description = quotedValue(fields.get('description'));
-    if (description === null || description.length < 10 || description.length > DESCRIPTION_MAX_LENGTH) {
-      addError(`${repoPath(skillPath)} frontmatter description must be matching-quoted and between 10 and ${DESCRIPTION_MAX_LENGTH} characters.`);
-    }
+  const skillsDirectory = path.join(REPO_ROOT, ...SKILLS_PATH.split('/'));
+  if (!sameEntries(skillsDirectory, [SKILL_NAME], SKILLS_PATH)) {
+    return;
   }
 
-  return skillNames;
+  const folderName = SKILL_NAME;
+  const skillDirectory = path.join(skillsDirectory, folderName);
+  if (!lstatSync(skillDirectory).isDirectory()) {
+    addError(`${SKILLS_PATH}/${folderName} must be a directory.`);
+    return;
+  }
+  validateSkillTree(skillDirectory);
+  const skillPath = path.join(skillDirectory, 'SKILL.md');
+  if (!existsSync(skillPath)) {
+    addError(`${SKILLS_PATH}/${folderName} is missing SKILL.md.`);
+    return;
+  }
+
+  const fields = parseFrontmatter(skillPath, new Set(['name', 'description']));
+  if (!fields) {
+    return;
+  }
+
+  const frontmatterName = scalarValue(fields.get('name'));
+  if (!frontmatterName) {
+    addError(`${repoPath(skillPath)} must have a non-empty frontmatter name.`);
+  } else if (frontmatterName !== folderName) {
+    addError(`${repoPath(skillPath)} frontmatter name "${frontmatterName}" must match folder name "${folderName}".`);
+  }
+  const lines = readFileSync(skillPath, 'utf8').replace(/\r\n?/g, '\n').split('\n');
+  const closingIndex = lines.indexOf('---', 1);
+  const nameLines = lines
+    .slice(1, closingIndex)
+    .filter((line) => /^\s*name\s*:/.test(line));
+  if (nameLines.length !== 1 || nameLines[0] !== `name: ${SKILL_NAME}`) {
+    addError(`${repoPath(skillPath)} frontmatter name line must be exactly "name: ${SKILL_NAME}".`);
+  }
+
+  const description = quotedValue(fields.get('description'));
+  if (description === null || description.length < 10 || description.length > DESCRIPTION_MAX_LENGTH) {
+    addError(`${repoPath(skillPath)} frontmatter description must be matching-quoted and between 10 and ${DESCRIPTION_MAX_LENGTH} characters.`);
+  }
 }
 
 function walkFiles(directory, relativeDirectory = '') {
@@ -384,6 +439,9 @@ function validateMarkdownLinks(files) {
       const relativePath = path.relative(REPO_ROOT, resolvedPath);
       if (relativePath.startsWith('..') || path.isAbsolute(relativePath) || !existsSync(resolvedPath)) {
         addError(`${repoPath(filePath)} has an unresolved relative Markdown link: ${destination}`);
+      } else if (isContainedPath(PLUGIN_ROOT, filePath, false)
+        && !isContainedPath(PLUGIN_ROOT, resolvedPath, true)) {
+        addError(`${repoPath(filePath)} links outside ${PLUGIN_ROOT_PATH}, which installed copies do not contain: ${destination}`);
       }
     }
   }
@@ -427,65 +485,15 @@ function validateLegacyReferences(files) {
   }
 }
 
-function validatePortableStrings(value, location = 'sync manifest') {
-  if (typeof value === 'string') {
-    if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) {
-      addError(`${location} contains an absolute path: ${value}`);
-    }
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => validatePortableStrings(item, `${location}[${index}]`));
-    return;
-  }
-
-  if (value && typeof value === 'object') {
-    for (const [key, nestedValue] of Object.entries(value)) {
-      validatePortableStrings(nestedValue, `${location}.${key}`);
-    }
-  }
+if (validatePluginLayout()) {
+  validatePlugin();
+  validateAgents();
+  validateSkills();
 }
-
-function validateSyncManifest(plugin, agentIds, skillNames) {
-  const manifestPath = path.join(REPO_ROOT, 'eng', 'awesome-copilot-sync.json');
-  const manifest = readJson(manifestPath, 'eng/awesome-copilot-sync.json');
-  if (!manifest) {
-    return;
-  }
-
-  validatePortableStrings(manifest);
-  try {
-    assertCanonicalSyncManifest(manifest);
-  } catch (error) {
-    addError(error.message);
-    return;
-  }
-  if (!sameArray(agentIds, EXPECTED_AGENT_IDS)) {
-    addError('sync manifest agent mappings do not match the standalone agent files.');
-  }
-
-  if (!skillNames.includes(manifest.skill.source)) {
-    addError(`sync manifest source skill does not exist: ${manifest.skill.source}`);
-  }
-  if (plugin && plugin.name !== CANONICAL_PLUGIN_TARGET) {
-    addError(`plugin.json name "${plugin.name}" must match sync target plugin "${CANONICAL_PLUGIN_TARGET}".`);
-  }
-  for (const field of EXPECTED_MANAGED_PLUGIN_FIELDS) {
-    if (plugin && !(field in plugin)) {
-      addError(`sync manifest manages plugin.json field "${field}", but the source field is missing.`);
-    }
-  }
-}
-
-const plugin = validatePlugin();
-const agentIds = validateAgents();
-const skillNames = validateSkills();
 const files = walkFiles(REPO_ROOT);
+validateSingleCopy(files);
 validateMarkdownLinks(files);
 validateLegacyReferences(files);
-validateSyncManifest(plugin, agentIds, skillNames);
-
 if (errors.length > 0) {
   console.error(`Validation failed with ${errors.length} error${errors.length === 1 ? '' : 's'}:`);
   for (const error of errors) {

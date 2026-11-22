@@ -1,6 +1,8 @@
 # AI Team Orchestration Plugin
 
-A lightweight VS Code agent plugin for role-separated AI development. It provides a Producer, a stack-adaptive Dev Team, optional QA, and concise templates for planning, brainstorming, and context recovery.
+A lightweight agent plugin for role-separated AI development with GitHub Copilot. It provides a Producer, a stack-adaptive Dev Team, optional QA, and concise templates for planning, brainstorming, and context recovery.
+
+The plugin package is in [`plugins/ai-team-orchestration`](./plugins/ai-team-orchestration/). It is an [Agent Plugins 1.0](https://agent-plugins.org/) package, and its [README](./plugins/ai-team-orchestration/README.md) is the marketplace description.
 
 ## What's Inside
 
@@ -12,7 +14,7 @@ A lightweight VS Code agent plugin for role-separated AI development. It provide
 
 Nova, Sage, and Milo are adaptive perspectives inside the Dev agent, not mandatory project layers or separate sessions.
 
-The `ai-team` skill includes:
+The `ai-team-orchestration` skill includes:
 
 - a concise project brief template;
 - a proportional work-plan template;
@@ -34,19 +36,30 @@ Use the lightest process that fits the work:
 
 ## Install
 
-### From source
+### Copilot CLI
 
-1. Run **Chat: Install Plugin From Source** in VS Code.
-2. Enter `https://github.com/denis-a-evdokimov/ai-team-orchestration.git`.
-3. Select one of the bundled agents in Chat.
+The `awesome-copilot` marketplace is registered by default. Install the plugin from it:
 
-### Manual development checkout
-
-```json
-"chat.pluginLocations": {
-  "/path/to/ai-team-orchestration": true
-}
+```text
+copilot plugin install ai-team-orchestration@awesome-copilot
+copilot plugin update ai-team-orchestration
 ```
+
+The second command updates an existing installation. Until the `awesome-copilot` entry points to this repository, it serves version 2.0.0 from its own copy. That copy has the same agent and skill content as version 2.0.1. See [Installing and Using Plugins](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/website/src/content/docs/learning-hub/installing-and-using-plugins.md) for the marketplace commands.
+
+### VS Code
+
+The [Awesome Copilot documentation](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/website/src/content/docs/learning-hub/installing-and-using-plugins.md#browsing-in-vs-code) states that VS Code also has the `awesome-copilot` marketplace by default. Search for `@agentPlugins` in the Extensions view, or run **Chat: Plugins**. This repository has not verified VS Code with the version 2.0.1 package.
+
+### Local development
+
+Load the plugin root from a checkout for one Copilot CLI session:
+
+```text
+copilot --plugin-dir ./plugins/ai-team-orchestration
+```
+
+In that session, `/plugin list` shows the plugin under **External Plugins**. Version 2.0.1 moved the plugin root into `plugins/ai-team-orchestration`. A route that points at the repository root does not find the plugin.
 
 ## Quick Start
 
@@ -54,7 +67,7 @@ Use the lightest process that fits the work:
 
 ```text
 @ai-team-producer Help me define the next useful outcome for this project.
-Use the ai-team skill. Keep planning proportional to the work.
+Use the ai-team-orchestration skill. Keep planning proportional to the work.
 ```
 
 ### Implement
@@ -119,7 +132,9 @@ Keep the stable agent IDs:
 
 Adapt role personalities and project perspectives as needed. QA and independent review are optional unless repository policy or risk makes them necessary.
 
-## Version 2
+## Versions
+
+Version 2.0.1 changes only the package. It uses the Agent Plugins 1.0 layout, keeps one copy in `plugins/ai-team-orchestration`, and renames the skill from `ai-team` to `ai-team-orchestration`. The agent and skill content does not change. [ADR 0001](./docs/decisions/0001-agent-plugins-layout.md) records the reasons.
 
 Version 2:
 
@@ -128,17 +143,25 @@ Version 2:
 - makes roles stack-adaptive;
 - replaces the formal delivery protocol with a lightweight, risk-proportionate default workflow.
 
-The standalone skill remains `ai-team`. The Awesome Copilot export adapts only its frontmatter name to `ai-team-orchestration`.
+## Repository Layout
+
+```text
+plugins/ai-team-orchestration/   The plugin root. Installs copy only this folder.
+  plugin.json                    Agent Plugins 1.0 manifest
+  README.md                      Marketplace description
+  com.github.copilot/agents/     The three agents
+  skills/ai-team-orchestration/  The skill and its four references
+docs/decisions/                  Architecture decision records
+eng/                             Validator and tests
+```
 
 ## Maintainers
 
-This repository is canonical. See [AGENTS.md](./AGENTS.md) for ownership rules and [CONTRIBUTING.md](./CONTRIBUTING.md) for validation and Awesome Copilot export instructions.
+This repository is the single source of the plugin. See [AGENTS.md](./AGENTS.md) for the invariants and [CONTRIBUTING.md](./CONTRIBUTING.md) for validation, the smoke test and releases.
 
 ```text
 npm run validate
 npm test
-npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
 ```
 
 ## Origin
