@@ -82,13 +82,13 @@ function parseFrontmatter(filePath, allowedFields) {
     if (lines[index].trim() === '') {
       continue;
     }
-    const match = /^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(lines[index]);
+    const match = /^([A-Za-z][A-Za-z0-9-]*):(?:[ \t]+(.*))?$/.exec(lines[index]);
     if (!match) {
       addError(`${repoPath(filePath)} contains unsupported frontmatter syntax: ${lines[index]}`);
       continue;
     }
 
-    const [, key, value] = match;
+    const [, key, value = ''] = match;
     if (fields.has(key)) {
       addError(`${repoPath(filePath)} has duplicate frontmatter field "${key}".`);
       continue;
@@ -97,7 +97,7 @@ function parseFrontmatter(filePath, allowedFields) {
       addError(`${repoPath(filePath)} contains unsupported frontmatter field "${key}".`);
       continue;
     }
-    fields.set(key, value.trim());
+    fields.set(key, value.replace(/[ \t]+$/, ''));
   }
 
   return fields;
@@ -223,7 +223,7 @@ function validateAgents() {
       addError(`${repoPath(filePath)} must be a non-hard-linked regular file.`);
       continue;
     }
-    const fields = parseFrontmatter(filePath, new Set(['name', 'description']));
+    const fields = parseFrontmatter(filePath, new Set(['name', 'description', 'include-custom-instructions']));
     if (!fields) {
       continue;
     }
@@ -239,6 +239,10 @@ function validateAgents() {
     const description = quotedValue(fields.get('description'));
     if (description === null || description.trim() === '' || description.length > DESCRIPTION_MAX_LENGTH) {
       addError(`${repoPath(filePath)} frontmatter description must be matching-quoted, non-empty, and no longer than ${DESCRIPTION_MAX_LENGTH} characters.`);
+    }
+
+    if (fields.get('include-custom-instructions') !== 'true') {
+      addError(`${repoPath(filePath)} frontmatter must contain exactly "include-custom-instructions: true".`);
     }
   }
 
