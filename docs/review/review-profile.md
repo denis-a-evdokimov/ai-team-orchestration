@@ -55,6 +55,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - Link extraction uses regular expressions on the raw text, not a Markdown or HTML parser. When it changes, test link forms in code, URL attributes outside well-formed tags, character references, backslash escapes and reference definitions in containers. Do not make plugin Markdown extraction skip code: a skip that differs from a client parser hides links. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
 - A version change that is missing from `plugin.json` when the plugin root changes.
 - Material from another repository without its license notice in the skill `NOTICE`. Installs never contain the root `LICENSE`.
+- A `LICENSE` line above the permission notice that does not start with `Copyright`. GitHub then detects "Other" instead of the MIT License. The validator rejects it.
 
 ## Severity calibration
 

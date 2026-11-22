@@ -530,6 +530,22 @@ function validateSkillNotice(notice, licenseText) {
   }
 }
 
+// GitHub detects the MIT License only if each line above the permission notice is the title, empty, or
+// a copyright line. Thus the pointer to the notice is part of a copyright line.
+function validateLicenseHeader(license) {
+  const lines = license.replace(/\r\n?/g, '\n').split('\n');
+  const header = lines.slice(0, Math.max(0, lines.findIndex((line) => line.startsWith('Permission is hereby granted'))));
+  for (const line of header.filter((candidate) => !['', 'MIT License'].includes(candidate.trim()))) {
+    if (!line.startsWith('Copyright ')) {
+      addError(`LICENSE line "${line}" must start with "Copyright", so that GitHub detects the MIT License.`);
+    }
+  }
+  const noticePath = `${PLUGIN_ROOT_PATH}/${SKILL_NOTICE}`;
+  if (!header.some((line) => line.startsWith(UPSTREAM_COPYRIGHT) && line.includes(noticePath))) {
+    addError(`LICENSE must have a line that starts with "${UPSTREAM_COPYRIGHT}" and gives the path ${noticePath}.`);
+  }
+}
+
 function validateLicenseNotice(inventory, payload) {
   const licenseEntry = inventory.entries.find((entry) => entry.relativePath === 'LICENSE');
   const license = licenseEntry ? entryText(licenseEntry, payload) : null;
@@ -537,14 +553,10 @@ function validateLicenseNotice(inventory, payload) {
     addError('LICENSE is missing or is not a regular file.');
     return;
   }
-  const licenseText = collapseWhitespace(license);
-  const noticePath = `${PLUGIN_ROOT_PATH}/${SKILL_NOTICE}`;
-  if (!licenseText.includes(`Portions ${UPSTREAM_COPYRIGHT}`) || !licenseText.includes(noticePath)) {
-    addError(`LICENSE must contain "Portions ${UPSTREAM_COPYRIGHT}" and the path ${noticePath}.`);
-  }
+  validateLicenseHeader(license);
   const notice = readPayloadText(payload, SKILL_NOTICE);
   if (notice !== null) {
-    validateSkillNotice(notice, licenseText);
+    validateSkillNotice(notice, collapseWhitespace(license));
   }
 }
 

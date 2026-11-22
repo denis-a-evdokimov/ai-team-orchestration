@@ -375,8 +375,9 @@ test('validator requires the license notice for the upstream material', async (c
     ['notice without the GitHub copyright line', 'NOTICE', 'Copyright GitHub, Inc.', '', /NOTICE must contain the line "Copyright GitHub, Inc\."/],
     ['notice with a changed permission notice', 'NOTICE', 'and/or sell', 'or sell', /NOTICE must contain the MIT permission notice of LICENSE/],
     ['notice with a legacy agent mention', 'NOTICE', 'Third-party notices', `Third-party notices @${'producer'}`, new RegExp(`NOTICE contains legacy agent mention "@${'producer'}"`)],
-    ['LICENSE without the portions line', 'LICENSE', 'Portions Copyright GitHub, Inc.', 'Copyright GitHub, Inc.', /LICENSE must contain "Portions Copyright GitHub, Inc\." and the path/],
-    ['LICENSE with a wrong notice path', 'LICENSE', 'ai-team-orchestration/NOTICE', 'ai-team-orchestration/LICENSE', /LICENSE must contain "Portions Copyright GitHub, Inc\." and the path/],
+    ['LICENSE without the GitHub copyright line', 'LICENSE', 'Copyright GitHub, Inc. (portions;', 'Copyright (c) GitHub (portions;', /LICENSE must have a line that starts with "Copyright GitHub, Inc\." and gives the path/],
+    ['LICENSE with a wrong notice path', 'LICENSE', 'ai-team-orchestration/NOTICE', 'ai-team-orchestration/LICENSE', /LICENSE must have a line that starts with "Copyright GitHub, Inc\." and gives the path/],
+    ['LICENSE line that hides the MIT License from GitHub', 'LICENSE', 'Copyright (c) 2026 Denis Evdokimov', 'Copyright (c) 2026 Denis Evdokimov\nPortions Copyright GitHub, Inc.', /LICENSE line "Portions Copyright GitHub, Inc\." must start with "Copyright"/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);

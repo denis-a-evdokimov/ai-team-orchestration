@@ -27,8 +27,8 @@ We chose option 4:
 
 - `skills/ai-team-orchestration/NOTICE` names the source and the parts of the four references that contain the material. Then it gives the MIT License text of github/awesome-copilot with "Copyright GitHub, Inc.".
 - The name `NOTICE` follows the [pinned Awesome Copilot catalog](https://github.com/github/awesome-copilot/tree/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/skills/anti-ui-slop). There, `skills/anti-ui-slop/NOTICE` gives third-party notices next to `SKILL.md`. In that catalog, a `LICENSE` or `LICENSE.txt` file in a skill folder gives the license and the owner of the whole skill. That name would tell users that GitHub owns the whole skill.
-- The root `LICENSE` keeps its MIT text and its copyright line. It adds "Portions Copyright GitHub, Inc." and the path of the notice.
-- `eng/validate.mjs` requires the notice, its copyright line, its permission notice and the pointer in `LICENSE`.
+- The root `LICENSE` keeps its MIT text and its copyright line. It adds the line "Copyright GitHub, Inc. (portions; see plugins/ai-team-orchestration/skills/ai-team-orchestration/NOTICE)". GitHub detects the MIT License only if each line above the permission notice starts with a copyright symbol. A test on GitHub showed that a separate line "Portions Copyright GitHub, Inc." changes the detected license from MIT to "Other", also without the path.
+- `eng/validate.mjs` requires the notice, its copyright line, its permission notice and the pointer in `LICENSE`. It also requires that each line above the permission notice in `LICENSE` starts with "Copyright".
 - The change is version 2.1.2. The agent and skill guidance does not change.
 
 ## Consequences

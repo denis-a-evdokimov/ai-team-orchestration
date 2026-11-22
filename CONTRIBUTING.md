@@ -31,7 +31,7 @@ The validator checks:
 - that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
 - local Markdown links, and that plugin Markdown links point only to files in the plugin root. It reads every link form, code examples included. In plugin Markdown, it also reads URL attributes such as `href` and `src` outside HTML tags;
 - that plugin Markdown has no parent-directory path and no root-relative link target, also not in code;
-- that the skill `NOTICE` has the line `Copyright GitHub, Inc.` and the MIT permission notice of `LICENSE`, and that `LICENSE` points to the notice;
+- that the skill `NOTICE` has the line `Copyright GitHub, Inc.` and the MIT permission notice of `LICENSE`, that a copyright line in `LICENSE` points to the notice, and that each line above the permission notice in `LICENSE` starts with `Copyright`. Another line there makes GitHub detect "Other" instead of the MIT License;
 - legacy agent references.
 
 It does not claim full YAML or JSON Schema validation. The Awesome Copilot gates stay authoritative for a catalog listing. The tests run the validator against temporary copies of this repository.
