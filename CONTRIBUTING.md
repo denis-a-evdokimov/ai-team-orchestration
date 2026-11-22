@@ -40,12 +40,6 @@ If more than 128 tools are enabled, reduce the selection in the tool picker or c
 
 The export is deterministic and one-way. It manages the three root agents, mirrors the skill with the one explicit frontmatter-name adaptation, and updates only configured target plugin fields.
 
-### Reference reconciliation
-
-On 2026-11-22, Denis explicitly requested reconciliation of the four reference-file changes from [github/awesome-copilot#2946](https://github.com/github/awesome-copilot/pull/2946), merged as `87ba8b1780d0e2655fc19fa3f8d4fc7879881744`. These upstream additions had not reached the canonical source. This bounded import restores agent and skill content parity with upstream baseline `f10fdb8b2660ce85c98f220b2f1ca24653768a5c`; it is an explicit exception, not a change to the canonical-first, one-way rule.
-
-The standalone skill remains `ai-team`; its export remains `ai-team-orchestration`. Plugin manifests still differ by distribution contract and ownership. This reconciliation does not change packaging, marketplace entries, installed plugins, or the standing export procedure.
-
 ### 1. Prepare a fresh target branch
 
 Start from a clean Awesome Copilot checkout with an `upstream` remote:
