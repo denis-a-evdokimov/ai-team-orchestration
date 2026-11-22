@@ -212,6 +212,12 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['bare parent segment in a code span', 'Do not write `[Parent](..)` here.', /README\.md contains a parent-directory path/],
     ['link after an indented fence with a flush-left closer', '  ```\ncode\n```\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['encoded parent path', 'See %2E%2E%2fLICENSE and &#46;&#46;&#47;x.', /README\.md contains a parent-directory path/],
+    ['root-relative srcset candidate after prose with a colon', 'Example [dark]:\n<img srcset="./README.md 1x, /root.png 2x" alt="">', /root-relative link/],
+    ['escaped root-relative link after a fence on a list marker', '- ```\n  code\n  ```\n  [License](\\/LICENSE)', /root-relative link/],
+    ['root-relative HTML link with a leading space', '- Item\n  ```\n  code\n```\n\n<a href=" /LICENSE">License</a>', /root-relative link/],
+    ['attribute after a quoted value without white space', '<img alt="x"src="../../LICENSE">', /links outside plugins\/ai-team-orchestration/],
+    ['attribute value with encoded line breaks', '<div>\n<img src=".&#10;./.&#10;./LICENSE">\n</div>', /links outside plugins\/ai-team-orchestration/],
+    ['destination with an escaped parenthesis', '[License](README.md\\)/../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -219,17 +225,27 @@ test('validator rejects plugin links that leave the installed payload', async (c
       assertRejected(targetRoot, pattern);
     });
   }
-  for (const [name, example] of [
-    ['code span', 'Use `src="assets/example.png"` in a tag.'],
-    ['fenced code block', '```html\n<img src="assets/example.png">\n```'],
-    ['HTML tag in a code span', 'Use `<img src="assets/example.png">` in a page.'],
-    ['data URL in srcset', '<img srcset="data:image/png;base64,AAAA 1x" alt="">'],
+  await context.test('ignores a data URL in srcset', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', '<img srcset="data:image/png;base64,AAAA 1x" alt="">\n\n## Origin');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
+  });
+});
+
+test('validator checks link forms in code examples', async (context) => {
+  for (const [name, file, example, pattern] of [
+    ['fenced code block in plugin Markdown', 'plugin', '```html\n<img src="assets/example.png">\n```', /README\.md has an unresolved relative Markdown link: assets\/example\.png/],
+    ['HTML tag in a code span in plugin Markdown', 'plugin', 'Use `<img src="assets/example.png">` in a page.', /README\.md has an unresolved relative Markdown link: assets\/example\.png/],
+    ['fenced block with CRLF line endings in repository Markdown', 'repository', '~~~\r\n[x](./not-a-file.md)\r\n~~~', /CONTRIBUTING\.md has an unresolved relative Markdown link: \.\/not-a-file\.md/],
   ]) {
-    await context.test(`ignores a ${name}`, (subtest) => {
+    await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
-      mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', `${example}\n\n## Origin`);
-      const result = runValidator(targetRoot);
-      assert.equal(result.status, 0, result.stderr);
+      const [filePath, heading] = file === 'plugin'
+        ? [pluginPath(targetRoot, 'README.md'), '## Origin']
+        : [path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests'];
+      mutateText(filePath, heading, `${example}\n\n${heading}`);
+      assertRejected(targetRoot, pattern);
     });
   }
 });
@@ -238,6 +254,7 @@ test('validator reports broken repository links without failing', async (context
   for (const [name, link, pattern] of [
     ['path through a file', '[x](./LICENSE/x.md)', /unresolved relative Markdown link: \.\/LICENSE\/x\.md/],
     ['encoded NUL character', '[x](./bad%00name.md)', /invalid encoded Markdown link: \.\/bad%00name\.md/],
+    ['HTML link after a quoted greater-than sign', '<a title="x>y" href="./not-a-file.md">x</a>', /CONTRIBUTING\.md has an unresolved relative Markdown link: \.\/not-a-file\.md/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -245,15 +262,9 @@ test('validator reports broken repository links without failing', async (context
       assertRejected(targetRoot, pattern);
     });
   }
-  await context.test('ignores a fenced example with CRLF line endings', (subtest) => {
+  await context.test('ignores an assignment outside an HTML tag', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
-    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '~~~\r\n[x](./not-a-file.md)\r\n~~~\r\n\r\n## Pull requests');
-    const result = runValidator(targetRoot);
-    assert.equal(result.status, 0, result.stderr);
-  });
-  await context.test('ignores a definition inside a multi-line code span', (subtest) => {
-    const targetRoot = createRepositoryCopy(subtest);
-    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '`a\n[a]: ./not-a-file.md\nb`\n\n## Pull requests');
+    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', "```python\ndata = load('input.json')\n```\n\n## Pull requests");
     const result = runValidator(targetRoot);
     assert.equal(result.status, 0, result.stderr);
   });

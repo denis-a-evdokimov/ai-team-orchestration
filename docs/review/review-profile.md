@@ -31,7 +31,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 ## Scale context
 
-- About ten plugin files and one validator of about 500 lines. Performance is not a material risk.
+- About ten plugin files and one validator of about 720 lines. Performance is not a material risk.
 
 ## Privacy and end-user identifiable information (EUII) surface
 
@@ -45,20 +45,20 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - No tags or GitHub releases: the merge commit on `main` is the release locator. Accepted in #18.
 - The validator implements the needed Agent Plugins 1.0 manifest rules without a JSON Schema library. Accepted in #18.
 - The plugin `README.md` is the user README: the marketplace description and the delegation guidance. The root `README.md` serves repository visitors and links to the plugin README. Accepted in #18.
-- The validator reads text in indented code blocks as Markdown. A naive indented-code rule would hide real links in nested list items. Thus an indented example can only add a diagnostic. Use fenced code blocks for examples. Accepted in #18.
+- The validator reads every Markdown link form in the raw text, code examples included, without a Markdown parser. In plugin Markdown, it also reads URL attributes outside HTML tags. Thus a code example or a sentence that looks like a broken link gives a diagnostic. Rephrase it, or use an existing target or a full URL. Reason: in #18, each code-aware scanner let a link leave the installed plugin. Accepted in #18.
 
 ## Recurring findings (check these first)
 
 - Documentation that claims an install route or a client behavior without verification or a citation. Keep command-line interface (CLI) discovery, catalog installation and client compatibility as separate claims, each with the client version that was tested.
 - Validator checks that compare names but not entry types, links, hard links or nested paths.
-- Link extraction is a scanner, not a full Markdown parser. When it changes, test fenced code of both kinds, code spans, HTML attributes, reference definitions in containers and escaped characters. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
+- Link extraction uses regular expressions on the raw text, not a Markdown or HTML parser. When it changes, test link forms in code, URL attributes outside well-formed tags, character references, backslash escapes and reference definitions in containers. Do not make plugin Markdown extraction skip code: a skip that differs from a client parser hides links. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
 - A version change that is missing from `plugin.json` when the plugin root changes.
 
 ## Severity calibration
 
 - A plugin-root file outside the allowlist, or a second copy of plugin content, is a BLOCKER.
 - A weakened validator check without a stated reason is at least MAJOR.
-- A link that the Markdown scanner misses is MINOR when the fail-closed path checks still keep it inside the plugin root. A form that leaves the plugin root despite those checks is MAJOR.
+- A link that the validator misses is MINOR when the fail-closed path checks still keep it inside the plugin root. A form that leaves the plugin root despite those checks is MAJOR. Exception: a form that needs deliberate obfuscation, for example escapes inside CSS or script, is MINOR. The checks find mistakes in reviewed pull requests. They are not a defense against a hostile author, who can write any instruction in plain text.
 
 ## Lens weighting
 
@@ -68,5 +68,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 780 lines after #18; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 720 lines after #18; each function within a complexity of 10 - **watch**
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**

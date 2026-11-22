@@ -13,7 +13,7 @@ The following rules are invariants:
 - The stable agent IDs are `ai-team-dev`, `ai-team-producer`, and `ai-team-qa`. Each agent file is `com.github.copilot/agents/<id>.md`.
 - The three bundled agents intentionally omit the optional `tools` and `model` fields. Thus they inherit the user's enabled built-in, Model Context Protocol (MCP), and extension tools. They also use the developer's selected model. Their role boundaries belong in instructions. Do not add a plugin-owned tool allowlist or model pin without an explicit compatibility decision.
 - The three bundled agents set `include-custom-instructions: true`. Clients that support this field, for example Copilot CLI 1.0.86 or later, then also give the repository instruction files to an agent that runs as a subagent. `npm run validate` requires this field. Do not remove it without an explicit compatibility decision.
-- Local file links in plugin Markdown point only to files in the plugin root. Installed copies do not contain other repository files. Use full URLs for other targets. Plugin Markdown contains no parent-directory path (`../`) and no root-relative link target, also not in code examples.
+- Local file links in plugin Markdown point only to files in the plugin root. Installed copies do not contain other repository files. Use full URLs for other targets. This rule also applies to link forms and URL attributes in code examples. Plugin Markdown contains no parent-directory path (`../`) and no root-relative link target, also not in code examples.
 
 `eng/validate.mjs` enforces these invariants.
 

@@ -27,7 +27,7 @@ The validator checks:
 - the exact file set of the plugin root: regular UTF-8 files only, with no links, hard links, extra files or extra folders;
 - the constrained frontmatter fields, the stable agent IDs, the `include-custom-instructions: true` agent setting and the skill name;
 - that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
-- local Markdown links, and that plugin Markdown links point only to files in the plugin root;
+- local Markdown links, and that plugin Markdown links point only to files in the plugin root. It reads every link form, code examples included. In plugin Markdown, it also reads URL attributes such as `href` and `src` outside HTML tags;
 - that plugin Markdown has no parent-directory path and no root-relative link target, also not in code;
 - legacy agent references.
 

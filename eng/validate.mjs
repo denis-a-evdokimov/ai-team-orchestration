@@ -51,7 +51,6 @@ const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 // O_NONBLOCK keeps a named pipe from blocking the open on POSIX systems.
 const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
-const URL_ATTRIBUTES = new Set(['action', 'background', 'cite', 'data', 'formaction', 'href', 'poster', 'src', 'srcset', 'xlink:href']);
 // Fail-closed path checks for plugin Markdown. They read the whole text, code included, so that
 // no link syntax can hide a path that leaves the installed plugin. Each form also matches when it
 // is percent-encoded or written as an HTML character reference.
@@ -59,7 +58,7 @@ const ENCODED_DOT = String.raw`(?:\.|%2e|&#0*46;|&#x0*2e;|&period;)`;
 const ENCODED_SLASH = String.raw`(?:[\\/]|%2f|%5c|&#0*47;|&#x0*2f;|&sol;|&#0*92;|&#x0*5c;|&bsol;)`;
 // A parent segment is `..` that is not part of a longer name, followed by a slash or by the end of a path.
 const PARENT_PATH = new RegExp(String.raw`(?<![\w.~%;-])${ENCODED_DOT}${ENCODED_DOT}(?=${ENCODED_SLASH}|[)\]>"'\s#?]|$)`, 'im');
-const ROOT_RELATIVE_PATH = new RegExp(String.raw`(?:\]\(\s*<?|\]:\s*<?|=\s*["']?)${ENCODED_SLASH}(?!${ENCODED_SLASH})`, 'i');
+const ROOT_RELATIVE_PATH = new RegExp(String.raw`(?:\]\(\s*<?\s*|\]:\s*<?\s*|=\s*["']?\s*)${ENCODED_SLASH}(?!${ENCODED_SLASH})`, 'i');
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
   'SKILL.md',
@@ -507,105 +506,18 @@ function validateSingleCopy(inventory, payload) {
   }
 }
 
-// Blanks fenced code blocks in one pass, in source order. A closing fence uses the character of
-// the opening fence, is at least as long, and has nothing after it. A non-blank line that is less
-// indented than the opening fence can end a list item and its fence. Then the pairing of fences is
-// uncertain, so the scan stops blanking for the rest of the text: it may check code, but it never
-// hides a link.
-function withoutFencedCode(markdown) {
-  let fence = null;
-  let uncertain = false;
-  return markdown.split('\n').map((line) => {
-    const marker = uncertain ? null : /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence !== null) {
-      if (marker && marker[2][0] === fence.marker[0] && marker[2].length >= fence.marker.length && marker[3].trim() === '') {
-        fence = null;
-        return '';
-      }
-      if (line.trim() === '' || /^ */.exec(line)[0].length >= fence.indent) {
-        return '';
-      }
-      fence = null;
-      uncertain = true;
-      return line;
-    }
-    if (marker && !(marker[2][0] === '`' && marker[3].includes('`'))) {
-      fence = { marker: marker[2], indent: marker[1].length };
-      return '';
-    }
-    return line;
-  }).join('\n');
-}
-
-const HTML_TAG_AT = /<[A-Za-z][A-Za-z0-9-]*((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>/y;
-const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
-const BACKTICK_RUN_AT = /`+/y;
-const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-const INLINE_LINK = /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g;
+// Link forms. The check reads them in the raw text, code examples included: a scan that skips code
+// must agree with the Markdown parser of every client, and a difference can hide a link. In plugin
+// Markdown, a URL attribute counts also outside a well-formed tag, for the same reason. An attribute
+// name follows white space, a slash or a quote, and an unquoted value ends only at white space or `>`,
+// as in the HTML tokenizer.
+const URL_ATTRIBUTE = /(?<=[\s/"'])(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>][^\s>]*))/gi;
+const HTML_TAG = /<[A-Za-z](?:[^<>"']|"[^"]*"|'[^']*')*>/g;
+// An inline link destination, with escaped characters and one level of balanced parentheses.
+const INLINE_LINK = /\]\(\s*(<[^>\n]*>|(?:\\.|[^\s()\\]|\((?:\\.|[^\s()\\])*\))+)/g;
 // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
 const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm;
 
-// Returns the positions of the blank lines that end paragraphs. A code span does not cross one.
-function paragraphEnds(text) {
-  return [...text.matchAll(/\n[ \t]*\n/g)].map((match) => match.index);
-}
-
-// Returns the end of the code span that starts at `start`, or -1.
-function codeSpanEnd(text, start, runLength, limit) {
-  const backtickRuns = /`+/g;
-  backtickRuns.lastIndex = start + runLength;
-  for (let run = backtickRuns.exec(text); run && run.index < limit; run = backtickRuns.exec(text)) {
-    if (run[0].length === runLength) {
-      return run.index + runLength;
-    }
-  }
-  return -1;
-}
-
-function matchAt(pattern, text, index) {
-  pattern.lastIndex = index;
-  return pattern.exec(text);
-}
-
-// Scans inline text in source order, as CommonMark does: a link or reference destination in angle
-// brackets stays a destination, an HTML tag that starts first keeps its attributes, a code span
-// that starts first hides the markup inside it, and an escaped character stays literal.
-// Returns the text without code spans and tags, and the tag attributes.
-function scanInline(text) {
-  const ends = paragraphEnds(text);
-  const tags = [];
-  const visible = [];
-  let destinationExpected = false;
-  let index = 0;
-  while (index < text.length) {
-    const character = text[index];
-    const destination = character === '<' && destinationExpected ? matchAt(ANGLE_DESTINATION_AT, text, index) : null;
-    const tag = character === '<' && !destination ? matchAt(HTML_TAG_AT, text, index) : null;
-    const run = character === '`' ? matchAt(BACKTICK_RUN_AT, text, index)[0] : '';
-    const limit = run ? ends.find((end) => end > index) ?? text.length : 0;
-    const spanEnd = run ? codeSpanEnd(text, index, run.length, limit) : -1;
-    let consumed = character;
-    if (destination || (run && spanEnd === -1)) {
-      consumed = destination ? destination[0] : run;
-      visible.push(consumed);
-    } else if (tag || run) {
-      consumed = tag ? tag[0] : text.slice(index, spanEnd);
-      if (tag) {
-        tags.push(tag[1]);
-      }
-      visible.push(' ');
-    } else {
-      consumed = character === '\\' ? text.slice(index, index + 2) : character;
-      visible.push(consumed);
-    }
-    const previous = index > 0 ? text[index - 1] : '';
-    destinationExpected = consumed.length === 1 && previous === ']' && (character === '(' || character === ':')
-      ? true
-      : destinationExpected && /^\s$/.test(consumed);
-    index += consumed.length;
-  }
-  return { visible: visible.join(''), tags };
-}
 // Reads the candidate URLs of a srcset value. A URL can contain commas, for example a data URL.
 function srcsetUrls(value) {
   const urls = [];
@@ -624,29 +536,56 @@ function srcsetUrls(value) {
   return urls;
 }
 
-function attributeDestinations(attributes) {
-  const destinations = [];
-  for (const attribute of attributes.matchAll(HTML_ATTRIBUTE)) {
-    const name = attribute[1].toLowerCase();
-    const value = attribute[2] ?? attribute[3] ?? attribute[4];
-    if (value !== undefined && URL_ATTRIBUTES.has(name)) {
-      destinations.push(...(name === 'srcset' ? srcsetUrls(value) : [value]));
-    }
-  }
-  return destinations;
+function attributeDestinations(text) {
+  return [...text.matchAll(URL_ATTRIBUTE)].flatMap((match) => {
+    const value = match[2] ?? match[3] ?? match[4];
+    return match[1].toLowerCase() === 'srcset' ? srcsetUrls(value) : [value];
+  });
 }
 
-function markdownDestinations(markdown) {
-  const { visible, tags } = scanInline(withoutFencedCode(markdown.replace(/\r\n?/g, '\n')));
-  const destinations = tags.flatMap(attributeDestinations);
+// Named character references that can change a path.
+const NAMED_REFERENCES = {
+  amp: '&', apos: "'", bsol: '\\', colon: ':', gt: '>', lt: '<', newline: '\n', num: '#',
+  percnt: '%', period: '.', quest: '?', quot: '"', sol: '/', tab: '\t',
+};
+// A backslash escape or a character reference. A Markdown client decodes both in one pass. A browser also decodes long numeric references.
+const ESCAPE_OR_REFERENCE = /\\([!-/:-@[-`{-~])|&(?:#(\d+)|#[xX]([0-9A-Fa-f]+)|([A-Za-z][A-Za-z0-9]{1,31}));/g;
+
+function unescapeMarkdown(text) {
+  return text.replace(ESCAPE_OR_REFERENCE, (match, escaped, decimal, hex, name) => {
+    if (escaped !== undefined) {
+      return escaped;
+    }
+    if (name !== undefined) {
+      return NAMED_REFERENCES[name.toLowerCase()] ?? match;
+    }
+    const codePoint = Number.parseInt(decimal ?? hex, decimal === undefined ? 16 : 10);
+    return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\uFFFD';
+  });
+}
+
+// Returns the path that a client resolves: without angle brackets, escapes decoded, and without the
+// tabs, line breaks and outer white space that a URL parser removes.
+function normalizeDestination(destination) {
+  const unwrapped = destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination;
+  return unescapeMarkdown(unwrapped).replace(/[\t\n\r]/g, '').trim();
+}
+
+// Every link form counts, also in a code example. Thus an example uses an existing target or a full URL.
+// Repository Markdown reads URL attributes only in HTML tags, so that code such as `data = x` is not a link.
+function markdownDestinations(markdown, inPlugin) {
+  const text = markdown.replace(/\r\n?/g, '\n');
+  const destinations = inPlugin
+    ? attributeDestinations(text)
+    : [...text.matchAll(HTML_TAG)].flatMap((tag) => attributeDestinations(tag[0]));
   for (const pattern of [REFERENCE_DEFINITION, INLINE_LINK]) {
-    for (const match of visible.matchAll(pattern)) {
+    for (const match of text.matchAll(pattern)) {
       destinations.push(match[1]);
     }
   }
-  return destinations.map((destination) => (
-    destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination));
+  return destinations.map(normalizeDestination);
 }
+
 function isExternalDestination(destination) {
   return !destination
     || destination.startsWith('#')
@@ -706,7 +645,8 @@ function validateLink(entry, destination, inventory, payload) {
 function validateMarkdownLinks(inventory, payload) {
   for (const entry of inventory.entries.filter((candidate) => candidate.relativePath.endsWith('.md'))) {
     const contents = entryText(entry, payload);
-    const destinations = contents === null ? [] : markdownDestinations(contents);
+    const inPlugin = pluginRelativePath(entry.absolutePath) !== null;
+    const destinations = contents === null ? [] : markdownDestinations(contents, inPlugin);
     for (const destination of destinations.filter((candidate) => !isExternalDestination(candidate))) {
       validateLink(entry, destination, inventory, payload);
     }
@@ -714,7 +654,8 @@ function validateMarkdownLinks(inventory, payload) {
 }
 
 function validatePayloadPaths(payload) {
-  for (const [relativePath, contents] of [...payload].filter(([file]) => file.endsWith('.md'))) {
+  for (const [relativePath, text] of [...payload].filter(([file]) => file.endsWith('.md'))) {
+    const contents = `${text}\n${unescapeMarkdown(text)}`;
     if (PARENT_PATH.test(contents)) {
       addError(`${payloadLabel(relativePath)} contains a parent-directory path, which can leave the installed plugin. Plugin Markdown must not contain one, also not in code.`);
     }
