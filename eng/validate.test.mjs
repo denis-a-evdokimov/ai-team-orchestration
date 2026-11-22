@@ -389,6 +389,7 @@ test('validator requires the license notice for the upstream material', async (c
     ['LICENSE with a suffix after the notice path', (root) => mutateText(licensePath(root), 'ai-team-orchestration/NOTICE)', 'ai-team-orchestration/NOTICE.bak)'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
     ['LICENSE line that GitHub does not detect', (root) => mutateText(licensePath(root), grant, `Portions Copyright GitHub, Inc.\n\n${grant}`), /LICENSE line "Portions Copyright GitHub, Inc\." must be the title or start with "Copyright"/],
     ['LICENSE without a permission notice', (root) => truncate(licensePath(root), false), /^- LICENSE must end with the complete MIT permission notice\.$/m],
+    ['LICENSE with the grant joined to a copyright line', (root) => writeFileSync(licensePath(root), readFileSync(licensePath(root), 'utf8').replace(/\r?\n\s*Permission is hereby granted/, ' Permission is hereby granted'), 'utf8'), /^- LICENSE must end with the complete MIT permission notice\.$/m],
     ['LICENSE and notice truncated in the same way', (root) => { truncate(licensePath(root), true); truncate(noticePath(root), true); }, /^- LICENSE must end with the complete MIT permission notice\.$[\s\S]*NOTICE must end with the complete MIT permission notice/m],
   ]) {
     await context.test(name, (subtest) => {

@@ -40,7 +40,7 @@ const SKILL_REFERENCES = Object.freeze([
 const SKILL_NOTICE = `${SKILL_PATH}/NOTICE`;
 const UPSTREAM_COPYRIGHT = 'Copyright GitHub, Inc.';
 const LICENSE_NOTICE_LINE = `${UPSTREAM_COPYRIGHT} (portions; see ${PLUGIN_ROOT_PATH}/${SKILL_NOTICE})`;
-const PERMISSION_START = /Permission\s+is\s+hereby\s+granted/;
+const PERMISSION_START = /^[ \t]*Permission\s+is\s+hereby\s+granted/m;
 // SHA-256 of the MIT permission notice and disclaimer, from "Permission is hereby granted" to the end,
 // with white space collapsed. It equals the SPDX MIT template and the LICENSE of github/awesome-copilot.
 const MIT_PERMISSION_SHA256 = 'fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5';
