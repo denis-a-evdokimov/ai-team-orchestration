@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   cpSync,
   linkSync,
   mkdirSync,
@@ -199,6 +200,10 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['reference with an escaped label', '[License][a\\]]\n\n[a\\]]: ../../LICENSE', /links outside plugins\/ai-team-orchestration/],
     ['HTML link', '<a href="../../LICENSE">License</a>', /links outside plugins\/ai-team-orchestration/],
     ['HTML link without quotes', '<a href=../../LICENSE>License</a>', /links outside plugins\/ai-team-orchestration/],
+    ['HTML attribute with a quoted >', '<a title="a>b" href="../../LICENSE">License</a>', /links outside plugins\/ai-team-orchestration/],
+    ['data-src before src', '<img data-src="./README.md" src="../../LICENSE">', /links outside plugins\/ai-team-orchestration/],
+    ['reference definition in a block quote', '[License][a]\n\n> [a]: ../../LICENSE', /links outside plugins\/ai-team-orchestration/],
+    ['link after a longer closing fence', '```\ncode\n````\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -371,6 +376,38 @@ test('validator rejects hard-linked plugin files', (context) => {
   const targetRoot = createRepositoryCopy(context);
   linkSync(pluginPath(targetRoot, 'README.md'), path.join(targetRoot, 'linked-readme.md'));
   assertRejected(targetRoot, /plugins\/ai-team-orchestration\/README\.md must not be hard-linked/);
+});
+
+test('validator reports special and unreadable files without blocking', async (context) => {
+  const posixUser = process.platform !== 'win32' && process.getuid?.() !== 0;
+  await context.test('named pipe in place of a plugin file', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const readmePath = pluginPath(targetRoot, 'README.md');
+    rmSync(readmePath);
+    if (process.platform === 'win32' || spawnSync('mkfifo', [readmePath]).status !== 0) {
+      subtest.skip('Named pipes need mkfifo on a POSIX system.');
+      return;
+    }
+    const result = spawnSync(process.execPath, [path.join(targetRoot, 'eng', 'validate.mjs')], {
+      cwd: targetRoot,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    assert.equal(result.status, 1, `Validator did not finish normally: ${result.signal ?? result.stdout}`);
+    assert.match(result.stderr, /README\.md must be a regular file or directory/);
+  });
+  await context.test('unreadable repository file', (subtest) => {
+    if (!posixUser) {
+      subtest.skip('File permissions need a POSIX system and a user other than root.');
+      return;
+    }
+    const targetRoot = createRepositoryCopy(subtest);
+    const unreadablePath = path.join(targetRoot, 'docs', 'unreadable.md');
+    writeFileSync(unreadablePath, '# Unreadable\n', 'utf8');
+    chmodSync(unreadablePath, 0o000);
+    subtest.after(() => chmodSync(unreadablePath, 0o600));
+    assertRejected(targetRoot, /docs\/unreadable\.md could not be read \(EACCES\)/);
+  });
 });
 
 test('formal workflow references are not part of the lightweight skill', (context) => {

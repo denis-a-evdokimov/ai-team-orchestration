@@ -49,7 +49,9 @@ const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
 }));
 // Keep a byte order mark visible: the Awesome Copilot gates reject a manifest that starts with one.
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+// O_NONBLOCK keeps a named pipe from blocking the open on POSIX systems.
+const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const URL_ATTRIBUTES = new Set(['action', 'background', 'cite', 'data', 'formaction', 'href', 'poster', 'src', 'srcset', 'xlink:href']);
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
   'SKILL.md',
@@ -121,14 +123,14 @@ function readCheckedFile(absolutePath, rejectReason) {
   let descriptor;
   try {
     descriptor = openSync(absolutePath, OPEN_READ_FLAGS);
-  } catch (error) {
-    return { reason: `could not be opened as a regular file (${error.code ?? error.message}).` };
-  }
-  try {
     const reason = rejectReason(fstatSync(descriptor));
     return reason ? { reason } : { buffer: readFileSync(descriptor) };
+  } catch (error) {
+    return { error: error.code ?? error.message };
   } finally {
-    closeSync(descriptor);
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
   }
 }
 
@@ -156,6 +158,8 @@ function collectPayloadFiles(directory, relativeDirectory, files) {
       collectPayloadFiles(absolutePath, relativePath, files);
     } else if (entryStat.isDirectory()) {
       addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
+    } else if (!entryStat.isFile()) {
+      addError(`${payloadLabel(relativePath)} must be a regular file or directory.`);
     } else {
       files.push(relativePath);
     }
@@ -165,9 +169,11 @@ function collectPayloadFiles(directory, relativeDirectory, files) {
 
 function readPayloadFile(payload, relativePath) {
   const label = payloadLabel(relativePath);
-  const { buffer, reason } = readCheckedFile(path.join(PLUGIN_ROOT, ...relativePath.split('/')), payloadRejectReason);
+  const { buffer, reason, error } = readCheckedFile(path.join(PLUGIN_ROOT, ...relativePath.split('/')), payloadRejectReason);
   const contents = buffer ? decodePayloadText(buffer) : null;
-  if (reason) {
+  if (error) {
+    addError(`${label} could not be read (${error}).`);
+  } else if (reason) {
     addError(`${label} ${reason}`);
   } else if (contents === null) {
     addError(`${label} is not valid UTF-8.`);
@@ -438,17 +444,42 @@ function pluginRelativePath(absolutePath) {
     : null;
 }
 
+const unreadableEntries = new Set();
+
+function reportUnreadable(entry, error) {
+  if (!unreadableEntries.has(entry.relativePath)) {
+    unreadableEntries.add(entry.relativePath);
+    addError(`${entry.relativePath} could not be read (${error}).`);
+  }
+}
+
 // Returns the text of a repository file. A plugin file is returned only if it passed the payload checks.
 function entryText(entry, payload) {
   const relativePath = pluginRelativePath(entry.absolutePath);
   if (relativePath !== null) {
     return readPayloadText(payload, relativePath);
   }
-  return entry.isFile ? readFileSync(entry.absolutePath, 'utf8') : null;
+  if (!entry.isFile) {
+    return null;
+  }
+  const { buffer, error } = readCheckedFile(entry.absolutePath, (fileStat) => (fileStat.isFile() ? null : 'skipped'));
+  if (error) {
+    reportUnreadable(entry, error);
+  }
+  return buffer ? buffer.toString('utf8') : null;
 }
 
 function contentHash(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function findCopy(entry, hashes, maxCopyBytes) {
+  const { buffer, error } = readCheckedFile(entry.absolutePath, (fileStat) => (
+    !fileStat.isFile() || fileStat.size > maxCopyBytes ? 'skipped' : null));
+  if (error) {
+    reportUnreadable(entry, error);
+  }
+  return buffer ? hashes.get(contentHash(normalizedText(buffer))) : undefined;
 }
 
 function validateSingleCopy(inventory, payload) {
@@ -461,46 +492,66 @@ function validateSingleCopy(inventory, payload) {
       addError(`${entry.relativePath} is plugin content outside ${PLUGIN_ROOT_PATH}; keep exactly one copy in the plugin root.`);
       continue;
     }
-    if (!entry.isFile) {
-      continue;
-    }
-    const { buffer } = readCheckedFile(entry.absolutePath, (fileStat) => (
-      !fileStat.isFile() || fileStat.size > maxCopyBytes ? 'skipped' : null));
-    const duplicateOf = buffer ? hashes.get(contentHash(normalizedText(buffer))) : undefined;
+    const duplicateOf = entry.isFile ? findCopy(entry, hashes, maxCopyBytes) : undefined;
     if (duplicateOf) {
       addError(`${entry.relativePath} duplicates ${payloadLabel(duplicateOf)}; keep exactly one copy in the plugin root.`);
     }
   }
 }
 
-// Removes fenced code blocks and code spans, so that code examples are not read as links.
-// A code span does not cross a blank line, and an escaped backtick does not open one.
-function withoutCode(markdown) {
+// Removes fenced code blocks, so that code examples are not read as links.
+// A closing fence uses the character of the opening fence and is at least as long.
+function withoutFencedCode(markdown) {
   return markdown
-    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, '')
-    .replace(/(?<![\\`])(`+)(?!`)(?:[^\n]|\n(?![ \t]*\n))*?[^`]\1(?!`)/g, ' ');
+    .replace(/^ {0,3}(`{3,})[^`\n]*\n[\s\S]*?(?:^ {0,3}\1`*[ \t]*$|(?![\s\S]))/gm, '')
+    .replace(/^ {0,3}(~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1~*[ \t]*$|(?![\s\S]))/gm, '');
+}
+
+// Removes code spans. A code span does not cross a blank line, and an escaped backtick does not open one.
+function withoutCodeSpans(markdown) {
+  return markdown.replace(/(?<![\\`])(`+)(?!`)(?:[^\n]|\n(?![ \t]*\n))*?[^`]\1(?!`)/g, ' ');
+}
+
+const HTML_TAG = /<[A-Za-z][A-Za-z0-9-]*((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>/g;
+const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+// Reads every attribute of every HTML tag. Tags are read before code spans are removed,
+// so that a backtick inside a tag cannot hide its attributes. A tag inside a code span is
+// also checked, which can only add a diagnostic.
+function htmlDestinations(text) {
+  const destinations = [];
+  for (const tag of text.matchAll(HTML_TAG)) {
+    for (const attribute of tag[1].matchAll(HTML_ATTRIBUTE)) {
+      const name = attribute[1].toLowerCase();
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value === undefined || !URL_ATTRIBUTES.has(name)) {
+        continue;
+      }
+      const urls = name === 'srcset' ? value.split(',').map((candidate) => candidate.trim().split(/\s+/)[0]) : [value];
+      destinations.push(...urls);
+    }
+  }
+  return destinations;
 }
 
 function markdownDestinations(markdown) {
   const patterns = [
     // The destination after any link text, so that nested brackets cannot hide a link.
     /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g,
-    // Reference definitions, also with escaped brackets in the label.
-    /^ {0,3}\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t]*(<[^>\n]*>|\S+)/gm,
-    // Attributes of HTML tags, with or without quotes.
-    /<[A-Za-z][A-Za-z0-9-]*\s[^>]*?\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+    // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
+    /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm,
   ];
-  const text = withoutCode(markdown);
-  const destinations = [];
+  const withoutFences = withoutFencedCode(markdown);
+  const text = withoutCodeSpans(withoutFences);
+  const destinations = htmlDestinations(withoutFences);
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
-      const destination = match.slice(1).find((group) => group !== undefined) ?? '';
-      destinations.push(destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination);
+      destinations.push(match[1]);
     }
   }
-  return destinations;
+  return destinations.map((destination) => (
+    destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination));
 }
-
 function isExternalDestination(destination) {
   return !destination
     || destination.startsWith('#')
