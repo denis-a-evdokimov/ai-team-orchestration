@@ -510,27 +510,29 @@ function validateSingleCopy(inventory, payload) {
 // must agree with the Markdown parser of every client, and a difference can hide a link. In plugin
 // Markdown, a URL attribute counts also outside a well-formed tag, for the same reason. As in the HTML
 // tokenizer, an attribute name follows white space, a slash or a quote, and an unquoted value ends
-// only at white space or `>`. A name in the path of a full URL, as in `https://example.com/src=x`, is
-// not an attribute.
-const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>][^\s>]*))/gi;
+// only at ASCII white space or `>`. A name in the path of a full URL, as in `https://example.com/src=x`,
+// is not an attribute. A link ends only at ASCII white space or an ASCII control character, never at
+// other white space such as U+00A0. Thus the end patterns do not use `\s`.
+const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
 const HTML_TAG = /<[A-Za-z](?:[^<>"']|"[^"]*"|'[^']*')*>/g;
 const INLINE_LINK_START = /\]\(\s*/g;
 const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
 const ESCAPABLE = /[!-/:-@[-`{-~]/;
+const DESTINATION_END = /[\x00-\x20\x7F]/;
 // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
-const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm;
+const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|[^\x00-\x20\x7F]+)/gm;
 // An autolink, such as `<https://example.com>`. Its content is literal.
-const AUTOLINK = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
+const AUTOLINK = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20\x7F<>]*)>/g;
 // A file URL or a Windows drive path, also a drive-relative one such as `C:notes.md`. It never points
 // into an installed plugin.
 const LOCAL_FILE_DESTINATION = /^(?:file:|[A-Za-z]:)/i;
 
-// Returns the end of an inline link destination without angle brackets. It ends at white space or
-// at a `)` that closes no `(`. An escaped parenthesis does not count.
+// Returns the end of an inline link destination without angle brackets. It ends at a space, at an
+// ASCII control character, or at a `)` that closes no `(`. An escaped parenthesis does not count.
 function rawDestinationEnd(text, begin) {
   let depth = 0;
   let index = begin;
-  while (index < text.length && !/\s/.test(text[index])) {
+  while (index < text.length && !DESTINATION_END.test(text[index])) {
     const character = text[index];
     if (character === '\\' && ESCAPABLE.test(text[index + 1] ?? '')) {
       index += 1;
@@ -557,12 +559,13 @@ function inlineDestinations(text) {
 }
 
 // Reads the candidate URLs of a srcset value. A URL can contain commas, for example a data URL.
+// ASCII white space separates the parts.
 function srcsetUrls(value) {
   const urls = [];
   let rest = value;
-  while (rest.replace(/^[\s,]+/, '') !== '') {
-    rest = rest.replace(/^[\s,]+/, '');
-    const url = /^\S+/.exec(rest)[0];
+  while (rest.replace(/^[\t\n\f\r ,]+/, '') !== '') {
+    rest = rest.replace(/^[\t\n\f\r ,]+/, '');
+    const url = /^[^\t\n\f\r ]+/.exec(rest)[0];
     const trimmedUrl = url.replace(/,+$/, '');
     urls.push(trimmedUrl);
     rest = rest.slice(url.length);
