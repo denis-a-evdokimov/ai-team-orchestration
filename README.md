@@ -94,13 +94,13 @@ The team agents set `include-custom-instructions: true`. This setting tells the 
 | Client | Repository instructions in a team subagent |
 | --- | --- |
 | Copilot CLI 1.0.86 or later | Yes. The Copilot CLI documentation describes this setting. |
-| GitHub Copilot app with Copilot runtime 1.0.86 or later | Expected. In our tests with runtime 1.0.106, a project agent with this setting got the files. We did not test the installed plugin yet. |
-| Earlier CLI or runtime versions | No. These versions do not support the setting. |
+| Copilot CLI before 1.0.86 | No. These versions do not support the setting. |
+| GitHub Copilot app | Expected. In our tests with app 1.4.3 (Copilot runtime 1.0.106), a project agent with this setting got the files. We did not test the installed plugin yet. |
 | VS Code | Do not rely on the setting. VS Code does not forward it when it converts agent files. Check how subagents get instructions in the harness that you use. |
 
 If you start Copilot CLI with `--no-custom-instructions`, no agent gets the repository instruction files. This setting does not change that.
 
-In our tests in the GitHub Copilot app with runtime 1.0.106, rules from plugins did not reach the tested subagents, with or without this setting.
+In our tests with the GitHub Copilot app 1.4.3 (Copilot runtime 1.0.106), rules from plugins did not reach the tested subagents, with or without this setting.
 
 If a delegated task must follow a rule that the subagent does not get:
 
