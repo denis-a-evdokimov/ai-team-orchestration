@@ -525,13 +525,17 @@ const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[
 
 // Returns the end of the code span that starts at `start`, or -1. A code span does not cross a blank line.
 function codeSpanEnd(text, start, runLength) {
-  const closer = new RegExp(`(?<!\`)\`{${runLength}}(?!\`)`, 'g');
-  closer.lastIndex = start + runLength;
-  const match = closer.exec(text);
-  if (!match || /\n[ \t]*\n/.test(text.slice(start, match.index))) {
-    return -1;
+  const blankLine = /\n[ \t]*\n/g;
+  blankLine.lastIndex = start;
+  const limit = blankLine.exec(text)?.index ?? text.length;
+  const backtickRuns = /`+/g;
+  backtickRuns.lastIndex = start + runLength;
+  for (let run = backtickRuns.exec(text); run && run.index < limit; run = backtickRuns.exec(text)) {
+    if (run[0].length === runLength) {
+      return run.index + runLength;
+    }
   }
-  return match.index + runLength;
+  return -1;
 }
 
 // Scans inline text in source order, as CommonMark does: an HTML tag that starts first keeps
