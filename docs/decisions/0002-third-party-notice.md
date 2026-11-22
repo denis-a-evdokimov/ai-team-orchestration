@@ -18,7 +18,7 @@
 
 1. Add the notice only to the root `LICENSE`. No install contains that file.
 2. Publish without a notice. This does not meet the conditions of the MIT License.
-3. Remove the #2946 material. Denis chose to align the content with upstream in #16.
+3. Remove the #2946 material. The owner chose to align the content with upstream in #16.
 4. Add a notice file to the skill folder, and point to it from the root `LICENSE`.
 
 ## Decision
