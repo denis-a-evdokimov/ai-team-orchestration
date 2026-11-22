@@ -371,20 +371,38 @@ test('validator keeps the installed file set exact', async (context) => {
 });
 
 test('validator requires the license notice for the upstream material', async (context) => {
-  for (const [name, file, oldText, newText, pattern] of [
-    ['notice without the GitHub copyright line', 'NOTICE', 'Copyright GitHub, Inc.', '', /NOTICE must contain the line "Copyright GitHub, Inc\."/],
-    ['notice with a changed permission notice', 'NOTICE', 'and/or sell', 'or sell', /NOTICE must contain the MIT permission notice of LICENSE/],
-    ['notice with a legacy agent mention', 'NOTICE', 'Third-party notices', `Third-party notices @${'producer'}`, new RegExp(`NOTICE contains legacy agent mention "@${'producer'}"`)],
-    ['LICENSE without the GitHub copyright line', 'LICENSE', 'Copyright GitHub, Inc. (portions;', 'Copyright (c) GitHub (portions;', /LICENSE must have a line that starts with "Copyright GitHub, Inc\." and gives the path/],
-    ['LICENSE with a wrong notice path', 'LICENSE', 'ai-team-orchestration/NOTICE', 'ai-team-orchestration/LICENSE', /LICENSE must have a line that starts with "Copyright GitHub, Inc\." and gives the path/],
-    ['LICENSE line that hides the MIT License from GitHub', 'LICENSE', 'Copyright (c) 2026 Denis Evdokimov', 'Copyright (c) 2026 Denis Evdokimov\nPortions Copyright GitHub, Inc.', /LICENSE line "Portions Copyright GitHub, Inc\." must start with "Copyright"/],
+  const noticePath = (targetRoot) => pluginPath(targetRoot, ...SKILL, 'NOTICE');
+  const licensePath = (targetRoot) => path.join(targetRoot, 'LICENSE');
+  const grant = 'Permission is hereby granted';
+  // Keeps the text up to the grant, with or without the grant itself.
+  const truncate = (filePath, keepGrant) => {
+    const contents = readFileSync(filePath, 'utf8');
+    assert.ok(contents.includes(grant), `Fixture text not found: ${grant}`);
+    writeFileSync(filePath, contents.slice(0, contents.indexOf(grant) + (keepGrant ? grant.length : 0)), 'utf8');
+  };
+  for (const [name, mutate, pattern] of [
+    ['notice without the GitHub copyright line', (root) => mutateText(noticePath(root), 'Copyright GitHub, Inc.', ''), /NOTICE must have the line "Copyright GitHub, Inc\."/],
+    ['notice with a changed permission notice', (root) => mutateText(noticePath(root), 'and/or sell', 'or sell'), /NOTICE must end with the complete MIT permission notice/],
+    ['notice with a legacy agent mention', (root) => mutateText(noticePath(root), 'Third-party notices', `Third-party notices @${'producer'}`), new RegExp(`NOTICE contains legacy agent mention "@${'producer'}"`)],
+    ['LICENSE without the GitHub copyright line', (root) => mutateText(licensePath(root), 'Copyright GitHub, Inc. (portions;', 'Copyright (c) GitHub (portions;'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE with a wrong notice path', (root) => mutateText(licensePath(root), 'ai-team-orchestration/NOTICE)', 'ai-team-orchestration/LICENSE)'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE with a suffix after the notice path', (root) => mutateText(licensePath(root), 'ai-team-orchestration/NOTICE)', 'ai-team-orchestration/NOTICE.bak)'), /LICENSE must have the line "Copyright GitHub, Inc\. \(portions; see/],
+    ['LICENSE line that GitHub does not detect', (root) => mutateText(licensePath(root), grant, `Portions Copyright GitHub, Inc.\n\n${grant}`), /LICENSE line "Portions Copyright GitHub, Inc\." must be the title or start with "Copyright"/],
+    ['LICENSE without a permission notice', (root) => truncate(licensePath(root), false), /^- LICENSE must end with the complete MIT permission notice\.$/m],
+    ['LICENSE and notice truncated in the same way', (root) => { truncate(licensePath(root), true); truncate(noticePath(root), true); }, /^- LICENSE must end with the complete MIT permission notice\.$[\s\S]*NOTICE must end with the complete MIT permission notice/m],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
-      mutateText(file === 'NOTICE' ? pluginPath(targetRoot, ...SKILL, 'NOTICE') : path.join(targetRoot, 'LICENSE'), oldText, newText);
+      mutate(targetRoot);
       assertRejected(targetRoot, pattern);
     });
   }
+  await context.test('accepts a rewrapped permission notice', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mutateText(licensePath(targetRoot), `${grant}, free of charge,`, 'Permission is hereby\ngranted, free of charge,');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
+  });
 });
 
 test('validator never reads rejected plugin files', async (context) => {

@@ -55,7 +55,8 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - Link extraction uses regular expressions on the raw text, not a Markdown or HTML parser. When it changes, test link forms in code, URL attributes outside well-formed tags, character references, backslash escapes and reference definitions in containers. Do not make plugin Markdown extraction skip code: a skip that differs from a client parser hides links. The fail-closed path checks (no parent-directory path and no root-relative target in plugin Markdown) keep a missed link inside the plugin root.
 - A version change that is missing from `plugin.json` when the plugin root changes.
 - Material from another repository without its license notice in the skill `NOTICE`. Installs never contain the root `LICENSE`.
-- A `LICENSE` line above the permission notice that does not start with `Copyright`. GitHub then detects "Other" instead of the MIT License. The validator rejects it.
+- A `LICENSE` line above the permission notice that is not the title, not blank, and does not start with `Copyright`. In a test, GitHub then reported "Other" instead of MIT. The validator rejects it.
+- A license check that compares two editable copies. Equal copies can both be incomplete. The validator pins the MIT permission notice by SHA-256.
 
 ## Severity calibration
 
@@ -71,5 +72,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 850 lines after #19; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 850 lines after #19 (about 790 after #18); each function within a complexity of 10 - **escalate**: split it by concern (payload, manifest, links, license) before the next new check
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**

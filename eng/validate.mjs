@@ -39,6 +39,11 @@ const SKILL_REFERENCES = Object.freeze([
 // the references. It stays in the skill folder, because a skill install copies only that folder.
 const SKILL_NOTICE = `${SKILL_PATH}/NOTICE`;
 const UPSTREAM_COPYRIGHT = 'Copyright GitHub, Inc.';
+const LICENSE_NOTICE_LINE = `${UPSTREAM_COPYRIGHT} (portions; see ${PLUGIN_ROOT_PATH}/${SKILL_NOTICE})`;
+const PERMISSION_START = /Permission\s+is\s+hereby\s+granted/;
+// SHA-256 of the MIT permission notice and disclaimer, from "Permission is hereby granted" to the end,
+// with white space collapsed. It equals the SPDX MIT template and the LICENSE of github/awesome-copilot.
+const MIT_PERMISSION_SHA256 = 'fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5';
 // The plugin root is the installed payload. Installs copy every file in it.
 const PLUGIN_FILES = Object.freeze([
   'README.md',
@@ -512,37 +517,32 @@ function validateSingleCopy(inventory, payload) {
   }
 }
 
-// License: the skill keeps the MIT notice of github/awesome-copilot, and LICENSE points to it.
-// Both licenses are the MIT License, so the notice repeats the permission notice of LICENSE.
+// License: LICENSE and the skill NOTICE both end with the complete MIT permission notice. LICENSE has a
+// GitHub copyright line that points to the notice, and the notice has the GitHub copyright line.
 
 function collapseWhitespace(text) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-function validateSkillNotice(notice, licenseText) {
-  const label = payloadLabel(SKILL_NOTICE);
-  if (!notice.split('\n').some((line) => line.trim() === UPSTREAM_COPYRIGHT)) {
-    addError(`${label} must contain the line "${UPSTREAM_COPYRIGHT}".`);
+// Returns the non-empty lines above the permission notice, or null after an error.
+function licenseHeaderLines(label, text) {
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const start = normalized.search(PERMISSION_START);
+  if (start === -1 || contentHash(collapseWhitespace(normalized.slice(start))) !== MIT_PERMISSION_SHA256) {
+    addError(`${label} must end with the complete MIT permission notice.`);
+    return null;
   }
-  const permissionStart = licenseText.indexOf('Permission is hereby granted');
-  if (permissionStart === -1 || !collapseWhitespace(notice).includes(licenseText.slice(permissionStart))) {
-    addError(`${label} must contain the MIT permission notice of LICENSE.`);
-  }
+  return normalized.slice(0, start).split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
-// GitHub detects the MIT License only if each line above the permission notice is the title, empty, or
-// a copyright line. Thus the pointer to the notice is part of a copyright line.
-function validateLicenseHeader(license) {
-  const lines = license.replace(/\r\n?/g, '\n').split('\n');
-  const header = lines.slice(0, Math.max(0, lines.findIndex((line) => line.startsWith('Permission is hereby granted'))));
-  for (const line of header.filter((candidate) => !['', 'MIT License'].includes(candidate.trim()))) {
-    if (!line.startsWith('Copyright ')) {
-      addError(`LICENSE line "${line}" must start with "Copyright", so that GitHub detects the MIT License.`);
-    }
+// GitHub reported "Other" instead of MIT for a LICENSE line above the permission notice that did not
+// start with a copyright symbol. Thus the pointer to the notice is part of a copyright line.
+function validateLicenseHeader(lines) {
+  for (const line of lines.filter((candidate) => candidate !== 'MIT License' && !candidate.startsWith('Copyright '))) {
+    addError(`LICENSE line "${line}" must be the title or start with "Copyright". GitHub can then report "Other" instead of MIT.`);
   }
-  const noticePath = `${PLUGIN_ROOT_PATH}/${SKILL_NOTICE}`;
-  if (!header.some((line) => line.startsWith(UPSTREAM_COPYRIGHT) && line.includes(noticePath))) {
-    addError(`LICENSE must have a line that starts with "${UPSTREAM_COPYRIGHT}" and gives the path ${noticePath}.`);
+  if (!lines.includes(LICENSE_NOTICE_LINE)) {
+    addError(`LICENSE must have the line "${LICENSE_NOTICE_LINE}".`);
   }
 }
 
@@ -551,12 +551,15 @@ function validateLicenseNotice(inventory, payload) {
   const license = licenseEntry ? entryText(licenseEntry, payload) : null;
   if (license === null) {
     addError('LICENSE is missing or is not a regular file.');
-    return;
   }
-  validateLicenseHeader(license);
+  const licenseLines = license === null ? null : licenseHeaderLines('LICENSE', license);
+  if (licenseLines !== null) {
+    validateLicenseHeader(licenseLines);
+  }
   const notice = readPayloadText(payload, SKILL_NOTICE);
-  if (notice !== null) {
-    validateSkillNotice(notice, collapseWhitespace(license));
+  const noticeLines = notice === null ? null : licenseHeaderLines(payloadLabel(SKILL_NOTICE), notice);
+  if (noticeLines !== null && !noticeLines.includes(UPSTREAM_COPYRIGHT)) {
+    addError(`${payloadLabel(SKILL_NOTICE)} must have the line "${UPSTREAM_COPYRIGHT}".`);
   }
 }
 
