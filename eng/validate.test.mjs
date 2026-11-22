@@ -337,6 +337,11 @@ test('validator keeps the installed file set exact', async (context) => {
     rmSync(pluginPath(targetRoot, ...SKILL, 'references', 'anti-patterns.md'));
     assertRejected(targetRoot, /references\/anti-patterns\.md is missing or is not a regular file/);
   });
+  await context.test('missing third-party notice', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    rmSync(pluginPath(targetRoot, ...SKILL, 'NOTICE'));
+    assertRejected(targetRoot, /skills\/ai-team-orchestration\/NOTICE is missing or is not a regular file/);
+  });
   await context.test('directory in place of README.md', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     const readmePath = pluginPath(targetRoot, 'README.md');
@@ -363,6 +368,22 @@ test('validator keeps the installed file set exact', async (context) => {
     writeFileSync(manifestPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(manifestPath)]));
     assertRejected(targetRoot, /plugin\.json must not start with a UTF-8 byte order mark/);
   });
+});
+
+test('validator requires the license notice for the upstream material', async (context) => {
+  for (const [name, file, oldText, newText, pattern] of [
+    ['notice without the GitHub copyright line', 'NOTICE', 'Copyright GitHub, Inc.', '', /NOTICE must contain the line "Copyright GitHub, Inc\."/],
+    ['notice with a changed permission notice', 'NOTICE', 'and/or sell', 'or sell', /NOTICE must contain the MIT permission notice of LICENSE/],
+    ['notice with a legacy agent mention', 'NOTICE', 'Third-party notices', `Third-party notices @${'producer'}`, new RegExp(`NOTICE contains legacy agent mention "@${'producer'}"`)],
+    ['LICENSE without the portions line', 'LICENSE', 'Portions Copyright GitHub, Inc.', 'Copyright GitHub, Inc.', /LICENSE must contain "Portions Copyright GitHub, Inc\." and the path/],
+    ['LICENSE with a wrong notice path', 'LICENSE', 'ai-team-orchestration/NOTICE', 'ai-team-orchestration/LICENSE', /LICENSE must contain "Portions Copyright GitHub, Inc\." and the path/],
+  ]) {
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(file === 'NOTICE' ? pluginPath(targetRoot, ...SKILL, 'NOTICE') : path.join(targetRoot, 'LICENSE'), oldText, newText);
+      assertRejected(targetRoot, pattern);
+    });
+  }
 });
 
 test('validator never reads rejected plugin files', async (context) => {

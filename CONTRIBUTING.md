@@ -10,6 +10,8 @@ Use a regular merge. Squash and rebase merges are disabled by repository policy.
 
 Do not put secrets or end-user identifying information in code, fixtures, documentation, issues, pull requests, screenshots, or logs. Report suspected vulnerabilities privately as described in [.github/SECURITY.md](./.github/SECURITY.md).
 
+Material from another repository needs its license notice. Add its source, the parts that contain it, and its notice to `plugins/ai-team-orchestration/skills/ai-team-orchestration/NOTICE`. Installs copy only the plugin root or the skill folder, so the root `LICENSE` does not reach users. See [ADR 0002](./docs/decisions/0002-third-party-notice.md).
+
 ## Local validation
 
 Node.js 20 or newer is required. There are no third-party package dependencies.
@@ -29,6 +31,7 @@ The validator checks:
 - that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
 - local Markdown links, and that plugin Markdown links point only to files in the plugin root. It reads every link form, code examples included. In plugin Markdown, it also reads URL attributes such as `href` and `src` outside HTML tags;
 - that plugin Markdown has no parent-directory path and no root-relative link target, also not in code;
+- that the skill `NOTICE` has the line `Copyright GitHub, Inc.` and the MIT permission notice of `LICENSE`, and that `LICENSE` points to the notice;
 - legacy agent references.
 
 It does not claim full YAML or JSON Schema validation. The Awesome Copilot gates stay authoritative for a catalog listing. The tests run the validator against temporary copies of this repository.

@@ -35,6 +35,10 @@ const SKILL_REFERENCES = Object.freeze([
   'project-brief-template.md',
   'sprint-plan-template.md',
 ]);
+// The MIT notice of github/awesome-copilot for the material that github/awesome-copilot#2946 added to
+// the references. It stays in the skill folder, because a skill install copies only that folder.
+const SKILL_NOTICE = `${SKILL_PATH}/NOTICE`;
+const UPSTREAM_COPYRIGHT = 'Copyright GitHub, Inc.';
 // The plugin root is the installed payload. Installs copy every file in it.
 const PLUGIN_FILES = Object.freeze([
   'README.md',
@@ -42,6 +46,7 @@ const PLUGIN_FILES = Object.freeze([
   ...EXPECTED_AGENT_IDS.map((id) => `${AGENTS_PATH}/${id}.md`),
   `${SKILL_PATH}/SKILL.md`,
   ...SKILL_REFERENCES.map((fileName) => `${SKILL_PATH}/references/${fileName}`),
+  SKILL_NOTICE,
 ].sort());
 const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
   const parts = file.split('/');
@@ -94,6 +99,7 @@ const TEXT_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
 ]);
+const TEXT_FILE_NAMES = new Set(['LICENSE', 'NOTICE']);
 
 const errors = [];
 
@@ -506,6 +512,42 @@ function validateSingleCopy(inventory, payload) {
   }
 }
 
+// License: the skill keeps the MIT notice of github/awesome-copilot, and LICENSE points to it.
+// Both licenses are the MIT License, so the notice repeats the permission notice of LICENSE.
+
+function collapseWhitespace(text) {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function validateSkillNotice(notice, licenseText) {
+  const label = payloadLabel(SKILL_NOTICE);
+  if (!notice.split('\n').some((line) => line.trim() === UPSTREAM_COPYRIGHT)) {
+    addError(`${label} must contain the line "${UPSTREAM_COPYRIGHT}".`);
+  }
+  const permissionStart = licenseText.indexOf('Permission is hereby granted');
+  if (permissionStart === -1 || !collapseWhitespace(notice).includes(licenseText.slice(permissionStart))) {
+    addError(`${label} must contain the MIT permission notice of LICENSE.`);
+  }
+}
+
+function validateLicenseNotice(inventory, payload) {
+  const licenseEntry = inventory.entries.find((entry) => entry.relativePath === 'LICENSE');
+  const license = licenseEntry ? entryText(licenseEntry, payload) : null;
+  if (license === null) {
+    addError('LICENSE is missing or is not a regular file.');
+    return;
+  }
+  const licenseText = collapseWhitespace(license);
+  const noticePath = `${PLUGIN_ROOT_PATH}/${SKILL_NOTICE}`;
+  if (!licenseText.includes(`Portions ${UPSTREAM_COPYRIGHT}`) || !licenseText.includes(noticePath)) {
+    addError(`LICENSE must contain "Portions ${UPSTREAM_COPYRIGHT}" and the path ${noticePath}.`);
+  }
+  const notice = readPayloadText(payload, SKILL_NOTICE);
+  if (notice !== null) {
+    validateSkillNotice(notice, licenseText);
+  }
+}
+
 // Link forms. The check reads them in the raw text, code examples included: a scan that skips code
 // must agree with the Markdown parser of every client, and a difference can hide a link. In plugin
 // Markdown, a URL attribute counts also outside a well-formed tag, for the same reason. As in the HTML
@@ -736,7 +778,7 @@ function escapeRegExp(value) {
 
 function isTextEntry(entry) {
   return TEXT_EXTENSIONS.has(path.extname(entry.relativePath).toLowerCase())
-    || path.posix.basename(entry.relativePath) === 'LICENSE';
+    || TEXT_FILE_NAMES.has(path.posix.basename(entry.relativePath));
 }
 
 function validateLegacyReferences(inventory, payload) {
@@ -776,6 +818,7 @@ for (const agentId of EXPECTED_AGENT_IDS) {
 validateSkill(payload);
 const inventory = walkRepository(REPO_ROOT, '', { entries: [], files: new Set(), directories: new Set() });
 validateSingleCopy(inventory, payload);
+validateLicenseNotice(inventory, payload);
 validateMarkdownLinks(inventory, payload);
 validatePayloadPaths(payload);
 validateLegacyReferences(inventory, payload);
