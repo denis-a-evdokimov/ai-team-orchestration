@@ -205,6 +205,9 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['reference definition in a block quote', '[License][a]\n\n> [a]: ../../LICENSE', /links outside plugins\/ai-team-orchestration/],
     ['link after a longer closing fence', '```\ncode\n````\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['link after a tilde fence that contains backticks', '~~~\n```\n~~~\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['link after a fence in a list item', '- Item\n  ```\n  code\n- [License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['reference definition in angle brackets', '[License][a]\n\n[a]: <../../LICENSE>', /links outside plugins\/ai-team-orchestration/],
+    ['destination in angle brackets', '[License](<LICENSE>)', /unresolved relative Markdown link: LICENSE/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -238,6 +241,12 @@ test('validator reports broken repository links without failing', async (context
       assertRejected(targetRoot, pattern);
     });
   }
+  await context.test('ignores a fenced example with CRLF line endings', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '~~~\r\n[x](./not-a-file.md)\r\n~~~\r\n\r\n## Pull requests');
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
+  });
   await context.test('dangling symbolic link', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     if (trySymlink(subtest, path.join(targetRoot, 'missing.md'), path.join(targetRoot, 'docs', 'dangling.md'))) {

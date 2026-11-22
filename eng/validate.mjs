@@ -501,16 +501,22 @@ function validateSingleCopy(inventory, payload) {
 
 // Blanks fenced code blocks in one pass, in source order. A closing fence uses the
 // character of the opening fence, is at least as long, and has nothing after it.
+// A fence in a list item also ends with its item: at a line that is less indented than
+// the opening fence. A fence that this scan does not detect leaves its text checked.
 function withoutFencedCode(markdown) {
   let fence = null;
   return markdown.split('\n').map((line) => {
-    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const marker = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    const indent = /^ */.exec(line)[0].length;
+    if (fence !== null && line.trim() !== '' && indent < fence.indent) {
+      fence = null;
+    }
     if (fence === null) {
-      const opens = marker && !(marker[1][0] === '`' && marker[2].includes('`'));
-      fence = opens ? marker[1] : null;
+      const opens = marker && !(marker[2][0] === '`' && marker[3].includes('`'));
+      fence = opens ? { marker: marker[2], indent: marker[1].length } : null;
       return opens ? '' : line;
     }
-    if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && marker[2].trim() === '') {
+    if (marker && marker[2][0] === fence.marker[0] && marker[2].length >= fence.marker.length && marker[3].trim() === '') {
       fence = null;
     }
     return '';
@@ -538,9 +544,10 @@ function codeSpanEnd(text, start, runLength) {
   return -1;
 }
 
-// Scans inline text in source order, as CommonMark does: an HTML tag that starts first keeps
-// its attributes, a code span that starts first hides the markup inside it, and an escaped
-// character stays literal. Returns the text without code spans and tags, and the tag attributes.
+// Scans inline text in source order, as CommonMark does: a link destination in angle brackets
+// stays a destination, an HTML tag that starts first keeps its attributes, a code span that starts
+// first hides the markup inside it, and an escaped character stays literal.
+// Returns the text without code spans and tags, and the tag attributes.
 function scanInline(text) {
   const tags = [];
   let visible = '';
@@ -550,7 +557,11 @@ function scanInline(text) {
     const tag = text[index] === '<' ? HTML_TAG_AT.exec(text) : null;
     const runLength = text[index] === '`' ? /^`+/.exec(text.slice(index))[0].length : 0;
     const spanEnd = runLength ? codeSpanEnd(text, index, runLength) : -1;
-    if (tag) {
+    const destination = text[index] === '<' && /\]\(\s*$/.test(visible) ? /^<[^<>\n]*>/.exec(text.slice(index)) : null;
+    if (destination) {
+      visible += destination[0];
+      index += destination[0].length;
+    } else if (tag) {
       tags.push(tag[1]);
       visible += ' ';
       index = HTML_TAG_AT.lastIndex;
@@ -599,10 +610,12 @@ function attributeDestinations(attributes) {
 }
 
 function markdownDestinations(markdown) {
-  const { visible, tags } = scanInline(withoutFencedCode(markdown));
+  const withoutFences = withoutFencedCode(markdown.replace(/\r\n?/g, '\n'));
+  const { visible, tags } = scanInline(withoutFences);
   const destinations = tags.flatMap(attributeDestinations);
-  for (const pattern of [INLINE_LINK, REFERENCE_DEFINITION]) {
-    for (const match of visible.matchAll(pattern)) {
+  // Reference definitions are blocks, so they are read before the inline scan.
+  for (const [text, pattern] of [[withoutFences, REFERENCE_DEFINITION], [visible, INLINE_LINK]]) {
+    for (const match of text.matchAll(pattern)) {
       destinations.push(match[1]);
     }
   }
