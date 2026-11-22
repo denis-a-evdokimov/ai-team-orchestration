@@ -509,11 +509,12 @@ function validateSingleCopy(inventory, payload) {
 // Link forms. The check reads them in the raw text, code examples included: a scan that skips code
 // must agree with the Markdown parser of every client, and a difference can hide a link. In plugin
 // Markdown, a URL attribute counts also outside a well-formed tag, for the same reason. As in the HTML
-// tokenizer, an attribute name follows white space, a slash or a quote, and an unquoted value ends
-// only at ASCII white space or `>`. A name in the path of a full URL, as in `https://example.com/src=x`,
-// is not an attribute. A link ends only at ASCII white space or an ASCII control character, never at
-// other white space such as U+00A0. Thus the end patterns do not use `\s`.
-const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\x00-\x20"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
+// tokenizer, an attribute name follows white space, a slash or a quote, only ASCII white space can
+// surround `=`, and an unquoted value ends only at ASCII white space or `>`. A name in the path of a
+// full URL, as in `https://example.com/src=x`, is not an attribute. A link ends only at ASCII white
+// space or an ASCII control character, never at other white space such as U+00A0. Thus the patterns
+// that end a link do not use `\s`.
+const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\x00-\x20"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
 const HTML_TAG = /<[A-Za-z](?:[^<>"']|"[^"]*"|'[^']*')*>/g;
 // CommonMark allows spaces, tabs and one line break before a destination.
 const INLINE_LINK_START = /\]\([ \t]*(?:\n[ \t]*)?/g;

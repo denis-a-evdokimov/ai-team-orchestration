@@ -224,6 +224,7 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['unquoted attribute value with a nonbreaking space', '<img src=README.md\u00A0/.&#10;./.&#10;./LICENSE>', /links outside plugins\/ai-team-orchestration/],
     ['destination with a nonbreaking space', '[License](README.md\u00A0/../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['HTML link with a trailing nonbreaking space', '<a href="README.md\u00A0">x</a>', /unresolved relative Markdown link: README\.md\u00A0/],
+    ['unquoted HTML link with a leading nonbreaking space', '<a href=\u00A0README.md>x</a>', /unresolved relative Markdown link: \u00A0README\.md/],
     ['destination with a leading nonbreaking space', '[x](\u00A0README.md)', /unresolved relative Markdown link: \u00A0README\.md/],
     ['HTML link to a Windows path with an escaped-looking dot', '<a href="C:\\.cache\\notes.md">Notes</a>', /README\.md has a local file link, which installed copies cannot resolve: C:\\\.cache\\notes\.md/],
     ['srcset candidate after an encoded comma', '<img srcset="README.md 1x&#44;/root.png 2x" alt="">', /root-relative link/],
