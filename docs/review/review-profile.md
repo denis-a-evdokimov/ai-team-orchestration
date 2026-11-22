@@ -32,7 +32,7 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 ## Scale context
 
-- Eleven plugin files and one validator of about 830 lines. Performance is not a material risk.
+- Eleven plugin files and one validator of about 850 lines. Performance is not a material risk.
 
 ## Privacy and end-user identifiable information (EUII) surface
 
@@ -71,5 +71,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 830 lines after #19; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 850 lines after #19; each function within a complexity of 10 - **watch**
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**
