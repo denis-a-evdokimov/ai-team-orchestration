@@ -24,7 +24,7 @@ npm test
 The validator checks:
 
 - the Agent Plugins 1.0 manifest fields and `$schema`;
-- the exact file set of the plugin root: regular files only, with no links, hard links or extra files;
+- the exact file set of the plugin root: regular UTF-8 files only, with no links, hard links, extra files or extra folders;
 - the constrained frontmatter fields, the stable agent IDs, the `include-custom-instructions: true` agent setting and the skill name;
 - that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
 - local Markdown links, and that plugin Markdown links point only to files in the plugin root;
@@ -51,12 +51,15 @@ For packaging or content changes, test the plugin root with GitHub Copilot CLI b
 
 ### Install check for a release commit
 
-Before a catalog entry points at a commit, install that commit through a temporary marketplace. Run the check in a new shell process with an isolated Copilot home. Then the check does not change your own installation.
+Before a catalog entry points at a commit, install that commit through a temporary marketplace. Run the check in a new shell process with an isolated Copilot home. Then the check does not change your own installation. The commands need PowerShell 7.4 or later.
 
-1. Start a new PowerShell process, for example `pwsh -NoProfile`. Point the home, cache and configuration folders at an empty temporary folder:
+1. Start a new PowerShell process, for example `pwsh -NoProfile`. Stop at the first failed command. Create a new, empty temporary folder, and point the home, cache and configuration folders at it:
 
    ```powershell
-   $iso = Join-Path ([IO.Path]::GetTempPath()) 'copilot-release-check'
+   $ErrorActionPreference = 'Stop'
+   $PSNativeCommandUseErrorActionPreference = $true
+   $iso = Join-Path ([IO.Path]::GetTempPath()) ('copilot-release-check-' + [guid]::NewGuid().ToString('N'))
+   New-Item -ItemType Directory -Path $iso | Out-Null
    $env:USERPROFILE = $iso
    $env:HOME = $iso
    $env:COPILOT_HOME = "$iso\.copilot"
@@ -107,12 +110,13 @@ Before a catalog entry points at a commit, install that commit through a tempora
    git diff --no-index --ignore-cr-at-eol --stat "$iso\plugins\ai-team-orchestration" "$env:COPILOT_HOME\installed-plugins\release-check\ai-team-orchestration"
    ```
 
-   No output and exit code 0 mean that the file sets and the file contents are equal.
+   No output and no error mean that the file sets and the file contents are equal. A difference makes `git diff` exit with code 1, and PowerShell stops with an error.
 5. Close the shell process, and delete the temporary folder.
 
 Do the comparison before you run another Copilot CLI command. In our test, Copilot CLI 1.0.114 removed the installed copy at its next start. The marketplace was a local folder, and the plugin source was a GitHub repository.
 
 The Awesome Copilot [external plugin gates](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346) run the same kind of install check. They also check the manifest and run `vally lint`.
+
 ## Release
 
 1. Change the plugin in `plugins/ai-team-orchestration/`. Set a new SemVer `version` in `plugin.json`.

@@ -4,7 +4,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
-export function tryLstat(filePath) {
+function tryLstat(filePath) {
   try {
     return lstatSync(filePath);
   } catch (error) {

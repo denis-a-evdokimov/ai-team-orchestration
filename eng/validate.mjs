@@ -11,7 +11,6 @@ import {
   assertManagedDirectory,
   createRootInfo,
   isContainedPath,
-  tryLstat,
 } from './path-safety.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,6 +39,11 @@ const PLUGIN_FILES = Object.freeze([
   `${SKILL_PATH}/SKILL.md`,
   ...SKILL_REFERENCES.map((fileName) => `${SKILL_PATH}/references/${fileName}`),
 ].sort());
+const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
+  const parts = file.split('/');
+  return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join('/'));
+}));
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
   'SKILL.md',
@@ -94,11 +98,20 @@ function normalizedText(buffer) {
   return buffer.toString('utf8').replace(/\r\n?/g, '\n');
 }
 
+function decodePayloadText(buffer) {
+  try {
+    return UTF8_DECODER.decode(buffer).replace(/\r\n?/g, '\n');
+  } catch {
+    return null;
+  }
+}
+
 function payloadLabel(relativePath) {
   return `${PLUGIN_ROOT_PATH}/${relativePath}`;
 }
 
-// Payload: every installed file must be an expected, regular, non-linked file.
+// Payload: every installed file must be an expected, regular, non-linked UTF-8 file.
+// Later checks read plugin files only through the vetted payload map.
 
 function collectPayloadFiles(directory, relativeDirectory, files) {
   for (const name of readdirSync(directory).sort()) {
@@ -107,8 +120,10 @@ function collectPayloadFiles(directory, relativeDirectory, files) {
     const entryStat = lstatSync(absolutePath);
     if (entryStat.isSymbolicLink()) {
       addError(`${payloadLabel(relativePath)} must not be a symbolic link, junction, or reparse point.`);
-    } else if (entryStat.isDirectory()) {
+    } else if (entryStat.isDirectory() && PLUGIN_DIRECTORIES.has(relativePath)) {
       collectPayloadFiles(absolutePath, relativePath, files);
+    } else if (entryStat.isDirectory()) {
+      addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
     } else if (!entryStat.isFile()) {
       addError(`${payloadLabel(relativePath)} must be a regular file or directory.`);
     } else if (entryStat.nlink !== 1) {
@@ -123,11 +138,12 @@ function collectPayloadFiles(directory, relativeDirectory, files) {
 }
 
 function validatePayload() {
+  const payload = new Map();
   try {
     assertManagedDirectory(createRootInfo(REPO_ROOT, 'Repository root'), PLUGIN_ROOT_PATH, PLUGIN_ROOT_PATH);
   } catch (error) {
     addError(error.message);
-    return new Set();
+    return payload;
   }
 
   const expectedFiles = new Set(PLUGIN_FILES);
@@ -135,18 +151,22 @@ function validatePayload() {
   for (const relativePath of regularFiles.filter((file) => !expectedFiles.has(file))) {
     addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
   }
-  const vettedFiles = new Set(regularFiles.filter((file) => expectedFiles.has(file)));
-  for (const relativePath of PLUGIN_FILES.filter((file) => !vettedFiles.has(file))) {
+  for (const relativePath of regularFiles.filter((file) => expectedFiles.has(file))) {
+    const contents = decodePayloadText(readFileSync(path.join(PLUGIN_ROOT, ...relativePath.split('/'))));
+    if (contents === null) {
+      addError(`${payloadLabel(relativePath)} is not valid UTF-8.`);
+    } else {
+      payload.set(relativePath, contents);
+    }
+  }
+  for (const relativePath of PLUGIN_FILES.filter((file) => !regularFiles.includes(file))) {
     addError(`${payloadLabel(relativePath)} is missing or is not a regular file.`);
   }
-  return vettedFiles;
+  return payload;
 }
 
-function readPayloadText(vettedFiles, relativePath) {
-  if (!vettedFiles.has(relativePath)) {
-    return null;
-  }
-  return normalizedText(readFileSync(path.join(PLUGIN_ROOT, ...relativePath.split('/'))));
+function readPayloadText(payload, relativePath) {
+  return payload.get(relativePath) ?? null;
 }
 
 // Frontmatter: the constrained subset that this repository relies on.
@@ -206,8 +226,8 @@ function quotedValue(value) {
 
 // Manifest: Agent Plugins 1.0 fields only.
 
-function loadManifest(vettedFiles) {
-  const contents = readPayloadText(vettedFiles, 'plugin.json');
+function loadManifest(payload) {
+  const contents = readPayloadText(payload, 'plugin.json');
   if (contents === null) {
     return null;
   }
@@ -286,8 +306,8 @@ function validateManifestPeople(manifest, label) {
   }
 }
 
-function validateManifest(vettedFiles) {
-  const manifest = loadManifest(vettedFiles);
+function validateManifest(payload) {
+  const manifest = loadManifest(payload);
   if (!manifest) {
     return;
   }
@@ -301,9 +321,9 @@ function validateManifest(vettedFiles) {
 
 // Agents and skill.
 
-function validateAgent(vettedFiles, agentId) {
+function validateAgent(payload, agentId) {
   const relativePath = `${AGENTS_PATH}/${agentId}.md`;
-  const contents = readPayloadText(vettedFiles, relativePath);
+  const contents = readPayloadText(payload, relativePath);
   const label = payloadLabel(relativePath);
   const frontmatter = contents === null ? null : parseFrontmatter(contents, label, AGENT_FRONTMATTER_FIELDS);
   if (!frontmatter) {
@@ -328,9 +348,9 @@ function validateAgent(vettedFiles, agentId) {
   }
 }
 
-function validateSkill(vettedFiles) {
+function validateSkill(payload) {
   const relativePath = `${SKILL_PATH}/SKILL.md`;
-  const contents = readPayloadText(vettedFiles, relativePath);
+  const contents = readPayloadText(payload, relativePath);
   const label = payloadLabel(relativePath);
   const frontmatter = contents === null ? null : parseFrontmatter(contents, label, SKILL_FRONTMATTER_FIELDS);
   if (!frontmatter) {
@@ -354,8 +374,9 @@ function validateSkill(vettedFiles) {
 }
 
 // Repository: one copy of the plugin, valid links, and no legacy references.
+// Plugin files are read only through the vetted payload map.
 
-function walkRepository(directory, relativeDirectory, entries) {
+function walkRepository(directory, relativeDirectory, inventory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (relativeDirectory === '' && (entry.name === '.git' || entry.name === 'node_modules')) {
       continue;
@@ -364,35 +385,51 @@ function walkRepository(directory, relativeDirectory, entries) {
     const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      walkRepository(absolutePath, relativePath, entries);
+      inventory.directories.add(relativePath);
+      walkRepository(absolutePath, relativePath, inventory);
     } else {
-      entries.push({ absolutePath, relativePath, isFile: entry.isFile() });
+      inventory.entries.push({ absolutePath, relativePath, isFile: entry.isFile() });
+      if (entry.isFile()) {
+        inventory.files.add(relativePath);
+      }
     }
   }
-  return entries;
+  return inventory;
 }
 
-function contentHash(buffer) {
-  return createHash('sha256').update(normalizedText(buffer), 'utf8').digest('hex');
+function pluginRelativePath(absolutePath) {
+  return isContainedPath(PLUGIN_ROOT, absolutePath, false)
+    ? path.relative(PLUGIN_ROOT, absolutePath).split(path.sep).join('/')
+    : null;
 }
 
-function payloadHashes(vettedFiles) {
-  const hashes = new Map();
-  for (const relativePath of vettedFiles) {
-    hashes.set(contentHash(readFileSync(path.join(PLUGIN_ROOT, ...relativePath.split('/')))), relativePath);
+// Returns the text of a repository file. A plugin file is returned only if it passed the payload checks.
+function entryText(entry, payload) {
+  const relativePath = pluginRelativePath(entry.absolutePath);
+  if (relativePath !== null) {
+    return readPayloadText(payload, relativePath);
   }
-  return hashes;
+  return entry.isFile ? readFileSync(entry.absolutePath, 'utf8') : null;
 }
 
-function validateSingleCopy(entries, vettedFiles) {
-  const hashes = payloadHashes(vettedFiles);
-  for (const entry of entries.filter((candidate) => !isContainedPath(PLUGIN_ROOT, candidate.absolutePath, false))) {
+function contentHash(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function validateSingleCopy(inventory, payload) {
+  const hashes = new Map([...payload].map(([relativePath, contents]) => [contentHash(contents), relativePath]));
+  // Line-ending normalization at most halves a copy, so a larger file cannot be a copy.
+  const maxCopyBytes = 2 * Math.max(0, ...[...payload.values()].map((contents) => Buffer.byteLength(contents)));
+  for (const entry of inventory.entries.filter((candidate) => pluginRelativePath(candidate.absolutePath) === null)) {
     const fileName = path.posix.basename(entry.relativePath);
     if (RESERVED_FILE_NAMES.has(fileName) || fileName.endsWith('.agent.md')) {
       addError(`${entry.relativePath} is plugin content outside ${PLUGIN_ROOT_PATH}; keep exactly one copy in the plugin root.`);
       continue;
     }
-    const duplicateOf = entry.isFile ? hashes.get(contentHash(readFileSync(entry.absolutePath))) : undefined;
+    if (!entry.isFile || lstatSync(entry.absolutePath).size > maxCopyBytes) {
+      continue;
+    }
+    const duplicateOf = hashes.get(contentHash(normalizedText(readFileSync(entry.absolutePath))));
     if (duplicateOf) {
       addError(`${entry.relativePath} duplicates ${payloadLabel(duplicateOf)}; keep exactly one copy in the plugin root.`);
     }
@@ -400,11 +437,14 @@ function validateSingleCopy(entries, vettedFiles) {
 }
 
 function markdownDestinations(markdown) {
+  const patterns = [
+    // The destination after any link text, so that nested brackets cannot hide a link.
+    /\]\(\s*(<[^>]*>|(?:[^\s()]|\([^\s()]*\))+)/g,
+    /^\s*\[[^\]]+\]:\s*(<[^>]*>|\S+)/gm,
+    /\b(?:href|src)\s*=\s*["']([^"']*)["']/gi,
+  ];
   const destinations = [];
-  const inlinePattern = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
-  const definitionPattern = /^\s*\[[^\]]+\]:\s*(<[^>]+>|\S+)/gm;
-
-  for (const pattern of [inlinePattern, definitionPattern]) {
+  for (const pattern of patterns) {
     for (const match of markdown.matchAll(pattern)) {
       const destination = match[1];
       destinations.push(destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination);
@@ -420,32 +460,36 @@ function isExternalDestination(destination) {
     || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination);
 }
 
-function linkTargetExists(vettedFiles, resolvedPath, inPlugin) {
+function linkTargetExists(inventory, payload, resolvedPath, inPlugin) {
   if (inPlugin) {
     const relativePath = path.relative(PLUGIN_ROOT, resolvedPath).split(path.sep).join('/');
-    return relativePath === ''
-      || vettedFiles.has(relativePath)
-      || [...vettedFiles].some((file) => file.startsWith(`${relativePath}/`));
+    return relativePath === '' || payload.has(relativePath) || PLUGIN_DIRECTORIES.has(relativePath);
   }
-  return Boolean(tryLstat(resolvedPath));
+  const relativePath = path.relative(REPO_ROOT, resolvedPath).split(path.sep).join('/');
+  return relativePath === '' || inventory.files.has(relativePath) || inventory.directories.has(relativePath);
 }
 
 function decodeLinkPath(entry, destination) {
+  let decodedPath;
   try {
-    return decodeURIComponent(destination.split(/[?#]/, 1)[0]);
+    decodedPath = decodeURIComponent(destination.split(/[?#]/, 1)[0]);
   } catch {
+    decodedPath = null;
+  }
+  if (decodedPath === null || decodedPath.includes('\0')) {
     addError(`${entry.relativePath} has an invalid encoded Markdown link: ${destination}`);
     return null;
   }
+  return decodedPath;
 }
 
-function validateLink(entry, destination, vettedFiles) {
+function validateLink(entry, destination, inventory, payload) {
   const decodedPath = decodeLinkPath(entry, destination);
   if (decodedPath === null) {
     return;
   }
 
-  const inPlugin = isContainedPath(PLUGIN_ROOT, entry.absolutePath, false);
+  const inPlugin = pluginRelativePath(entry.absolutePath) !== null;
   const rootRelative = decodedPath.startsWith('/');
   if (inPlugin && rootRelative) {
     addError(`${entry.relativePath} has a root-relative link, which installed copies cannot resolve: ${destination}`);
@@ -460,16 +504,17 @@ function validateLink(entry, destination, vettedFiles) {
     addError(inPlugin
       ? `${entry.relativePath} links outside ${PLUGIN_ROOT_PATH}, which installed copies do not contain: ${destination}`
       : `${entry.relativePath} has an unresolved relative Markdown link: ${destination}`);
-  } else if (!linkTargetExists(vettedFiles, resolvedPath, inPlugin)) {
+  } else if (!linkTargetExists(inventory, payload, resolvedPath, inPlugin)) {
     addError(`${entry.relativePath} has an unresolved relative Markdown link: ${destination}`);
   }
 }
 
-function validateMarkdownLinks(entries, vettedFiles) {
-  for (const entry of entries.filter((candidate) => candidate.isFile && candidate.relativePath.endsWith('.md'))) {
-    const destinations = markdownDestinations(readFileSync(entry.absolutePath, 'utf8'));
+function validateMarkdownLinks(inventory, payload) {
+  for (const entry of inventory.entries.filter((candidate) => candidate.relativePath.endsWith('.md'))) {
+    const contents = entryText(entry, payload);
+    const destinations = contents === null ? [] : markdownDestinations(contents);
     for (const destination of destinations.filter((candidate) => !isExternalDestination(candidate))) {
-      validateLink(entry, destination, vettedFiles);
+      validateLink(entry, destination, inventory, payload);
     }
   }
 }
@@ -478,7 +523,12 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function validateLegacyReferences(entries) {
+function isTextEntry(entry) {
+  return TEXT_EXTENSIONS.has(path.extname(entry.relativePath).toLowerCase())
+    || path.posix.basename(entry.relativePath) === 'LICENSE';
+}
+
+function validateLegacyReferences(inventory, payload) {
   const legacyMentions = [
     `@${'producer'}`,
     `@${'dev-team'}`,
@@ -490,13 +540,11 @@ function validateLegacyReferences(entries) {
     `${'qa'}.agent.md`,
   ];
 
-  for (const entry of entries.filter((candidate) => candidate.isFile)) {
-    const extension = path.extname(entry.relativePath).toLowerCase();
-    if (!TEXT_EXTENSIONS.has(extension) && path.posix.basename(entry.relativePath) !== 'LICENSE') {
+  for (const entry of inventory.entries.filter(isTextEntry)) {
+    const contents = entryText(entry, payload);
+    if (contents === null) {
       continue;
     }
-
-    const contents = readFileSync(entry.absolutePath, 'utf8');
     for (const mention of legacyMentions.filter((candidate) => contents.includes(candidate))) {
       addError(`${entry.relativePath} contains legacy agent mention "${mention}".`);
     }
@@ -509,16 +557,16 @@ function validateLegacyReferences(entries) {
   }
 }
 
-const vettedFiles = validatePayload();
-validateManifest(vettedFiles);
+const payload = validatePayload();
+validateManifest(payload);
 for (const agentId of EXPECTED_AGENT_IDS) {
-  validateAgent(vettedFiles, agentId);
+  validateAgent(payload, agentId);
 }
-validateSkill(vettedFiles);
-const entries = walkRepository(REPO_ROOT, '', []);
-validateSingleCopy(entries, vettedFiles);
-validateMarkdownLinks(entries, vettedFiles);
-validateLegacyReferences(entries);
+validateSkill(payload);
+const inventory = walkRepository(REPO_ROOT, '', { entries: [], files: new Set(), directories: new Set() });
+validateSingleCopy(inventory, payload);
+validateMarkdownLinks(inventory, payload);
+validateLegacyReferences(inventory, payload);
 
 if (errors.length > 0) {
   console.error(`Validation failed with ${errors.length} error${errors.length === 1 ? '' : 's'}:`);

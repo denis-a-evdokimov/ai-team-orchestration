@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -38,6 +39,41 @@ function runValidator(targetRoot) {
     cwd: targetRoot,
     encoding: 'utf8',
   });
+}
+
+// Runs the validator with a preload that records each path passed to readFileSync.
+function runValidatorTracingReads(context, targetRoot) {
+  const traceRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-reads-'));
+  context.after(() => rmSync(traceRoot, { force: true, recursive: true }));
+  const logPath = path.join(traceRoot, 'reads.log');
+  const preloadPath = path.join(traceRoot, 'trace-reads.cjs');
+  writeFileSync(preloadPath, [
+    "const fs = require('node:fs');",
+    "const { syncBuiltinESMExports } = require('node:module');",
+    'const readFileSync = fs.readFileSync;',
+    'fs.readFileSync = function tracedReadFileSync(file, ...rest) {',
+    `  fs.appendFileSync(${JSON.stringify(logPath)}, \`\${String(file)}\\n\`);`,
+    '  return readFileSync.call(this, file, ...rest);',
+    '};',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'), 'utf8');
+  const result = spawnSync(process.execPath, ['--require', preloadPath, path.join(targetRoot, 'eng', 'validate.mjs')], {
+    cwd: targetRoot,
+    encoding: 'utf8',
+  });
+  const reads = readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map(comparablePath);
+  return { result, reads };
+}
+
+function comparablePath(file) {
+  let resolved = path.resolve(file);
+  try {
+    resolved = realpathSync.native(resolved);
+  } catch {
+    // Keep the lexical path for a file that does not exist.
+  }
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 function mutateText(filePath, oldText, newText) {
@@ -151,6 +187,8 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['parent-relative link', '[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
     ['root-relative link', '[License](/LICENSE)', /root-relative link/],
     ['link with a parenthesized title', '[License](../../LICENSE (License))', /links outside plugins\/ai-team-orchestration/],
+    ['link text with nested brackets', '[[License]](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['HTML link', '<a href="../../LICENSE">License</a>', /links outside plugins\/ai-team-orchestration/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -158,6 +196,26 @@ test('validator rejects plugin links that leave the installed payload', async (c
       assertRejected(targetRoot, pattern);
     });
   }
+});
+
+test('validator reports broken repository links without failing', async (context) => {
+  for (const [name, link, pattern] of [
+    ['path through a file', '[x](./LICENSE/x.md)', /unresolved relative Markdown link: \.\/LICENSE\/x\.md/],
+    ['encoded NUL character', '[x](./bad%00name.md)', /invalid encoded Markdown link: \.\/bad%00name\.md/],
+  ]) {
+    await context.test(name, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', `${link}\n\n## Pull requests`);
+      assertRejected(targetRoot, pattern);
+    });
+  }
+  await context.test('dangling symbolic link', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    if (trySymlink(subtest, path.join(targetRoot, 'missing.md'), path.join(targetRoot, 'docs', 'dangling.md'))) {
+      mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '[x](./docs/dangling.md)\n\n## Pull requests');
+      assertRejected(targetRoot, /unresolved relative Markdown link: \.\/docs\/dangling\.md/);
+    }
+  });
 });
 
 test('validator requires an Agent Plugins 1.0 manifest', async (context) => {
@@ -188,7 +246,7 @@ test('validator keeps the installed file set exact', async (context) => {
   await context.test('second package inside the skill', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     copyFile(pluginPath(targetRoot, 'plugin.json'), pluginPath(targetRoot, ...SKILL, 'references', 'copy', 'plugin.json'));
-    assertRejected(targetRoot, /references\/copy\/plugin\.json is not part of the plugin file set/);
+    assertRejected(targetRoot, /references\/copy is not part of the plugin file set/);
   });
   await context.test('missing reference', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
@@ -203,6 +261,41 @@ test('validator keeps the installed file set exact', async (context) => {
     mkdirSync(readmePath);
     writeFileSync(path.join(readmePath, 'index.md'), contents);
     assertRejected(targetRoot, /README\.md is missing or is not a regular file/);
+  });
+  await context.test('empty extra skill directory', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    mkdirSync(pluginPath(targetRoot, 'skills', 'extra-skill'));
+    assertRejected(targetRoot, /skills\/extra-skill is not part of the plugin file set/);
+  });
+  await context.test('reference that is not UTF-8', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const referencePath = pluginPath(targetRoot, ...SKILL, 'references', 'anti-patterns.md');
+    writeFileSync(referencePath, Buffer.concat([readFileSync(referencePath), Buffer.from([0xff, 0xfe, 0xfd])]));
+    assertRejected(targetRoot, /references\/anti-patterns\.md is not valid UTF-8/);
+  });
+});
+
+test('validator never reads rejected plugin files', async (context) => {
+  await context.test('hard-linked README', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const readmePath = pluginPath(targetRoot, 'README.md');
+    linkSync(readmePath, path.join(targetRoot, 'linked-readme.md'));
+    const { result, reads } = runValidatorTracingReads(subtest, targetRoot);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /README\.md must not be hard-linked/);
+    assert.ok(reads.includes(comparablePath(pluginPath(targetRoot, 'plugin.json'))), 'The read trace must record payload reads.');
+    assert.equal(reads.includes(comparablePath(readmePath)), false);
+  });
+  await context.test('unexpected Markdown file', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const notesPath = pluginPath(targetRoot, 'NOTES.md');
+    writeFileSync(notesPath, `[License](../../LICENSE) @${'producer'}\n`, 'utf8');
+    const { result, reads } = runValidatorTracingReads(subtest, targetRoot);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /NOTES\.md is not part of the plugin file set/);
+    assert.doesNotMatch(result.stderr, /NOTES\.md (links|contains)/);
+    assert.ok(reads.includes(comparablePath(pluginPath(targetRoot, 'plugin.json'))), 'The read trace must record payload reads.');
+    assert.equal(reads.includes(comparablePath(notesPath)), false);
   });
 });
 
