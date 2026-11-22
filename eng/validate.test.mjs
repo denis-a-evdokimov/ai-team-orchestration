@@ -41,7 +41,7 @@ function runValidator(targetRoot) {
   });
 }
 
-// Runs the validator with a preload that records each path passed to readFileSync.
+// Runs the validator with a preload that records the path of each file whose content is read.
 function runValidatorTracingReads(context, targetRoot) {
   const traceRoot = mkdtempSync(path.join(tmpdir(), 'ai-team-reads-'));
   context.after(() => rmSync(traceRoot, { force: true, recursive: true }));
@@ -50,9 +50,17 @@ function runValidatorTracingReads(context, targetRoot) {
   writeFileSync(preloadPath, [
     "const fs = require('node:fs');",
     "const { syncBuiltinESMExports } = require('node:module');",
+    'const descriptors = new Map();',
+    'const openSync = fs.openSync;',
+    'fs.openSync = function tracedOpenSync(file, ...rest) {',
+    '  const descriptor = openSync.call(this, file, ...rest);',
+    '  descriptors.set(descriptor, String(file));',
+    '  return descriptor;',
+    '};',
     'const readFileSync = fs.readFileSync;',
     'fs.readFileSync = function tracedReadFileSync(file, ...rest) {',
-    `  fs.appendFileSync(${JSON.stringify(logPath)}, \`\${String(file)}\\n\`);`,
+    "  const name = typeof file === 'number' ? descriptors.get(file) ?? `fd:${file}` : String(file);",
+    `  fs.appendFileSync(${JSON.stringify(logPath)}, \`\${name}\\n\`);`,
     '  return readFileSync.call(this, file, ...rest);',
     '};',
     'syncBuiltinESMExports();',
@@ -188,12 +196,25 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['root-relative link', '[License](/LICENSE)', /root-relative link/],
     ['link with a parenthesized title', '[License](../../LICENSE (License))', /links outside plugins\/ai-team-orchestration/],
     ['link text with nested brackets', '[[License]](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['reference with an escaped label', '[License][a\\]]\n\n[a\\]]: ../../LICENSE', /links outside plugins\/ai-team-orchestration/],
     ['HTML link', '<a href="../../LICENSE">License</a>', /links outside plugins\/ai-team-orchestration/],
+    ['HTML link without quotes', '<a href=../../LICENSE>License</a>', /links outside plugins\/ai-team-orchestration/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
       mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', `${link}\n\n## Origin`);
       assertRejected(targetRoot, pattern);
+    });
+  }
+  for (const [name, example] of [
+    ['code span', 'Use `src="assets/example.png"` in a tag.'],
+    ['fenced code block', '```html\n<img src="assets/example.png">\n```'],
+  ]) {
+    await context.test(`ignores a ${name}`, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', `${example}\n\n## Origin`);
+      const result = runValidator(targetRoot);
+      assert.equal(result.status, 0, result.stderr);
     });
   }
 });
@@ -272,6 +293,12 @@ test('validator keeps the installed file set exact', async (context) => {
     const referencePath = pluginPath(targetRoot, ...SKILL, 'references', 'anti-patterns.md');
     writeFileSync(referencePath, Buffer.concat([readFileSync(referencePath), Buffer.from([0xff, 0xfe, 0xfd])]));
     assertRejected(targetRoot, /references\/anti-patterns\.md is not valid UTF-8/);
+  });
+  await context.test('manifest with a byte order mark', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    const manifestPath = pluginPath(targetRoot, 'plugin.json');
+    writeFileSync(manifestPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(manifestPath)]));
+    assertRejected(targetRoot, /plugin\.json must not start with a UTF-8 byte order mark/);
   });
 });
 

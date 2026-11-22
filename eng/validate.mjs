@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
 } from 'node:fs';
@@ -43,7 +47,9 @@ const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
   const parts = file.split('/');
   return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join('/'));
 }));
-const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+// Keep a byte order mark visible: the Awesome Copilot gates reject a manifest that starts with one.
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
 const RESERVED_FILE_NAMES = new Set([
   'plugin.json',
   'SKILL.md',
@@ -95,7 +101,7 @@ function isPlainObject(value) {
 }
 
 function normalizedText(buffer) {
-  return buffer.toString('utf8').replace(/\r\n?/g, '\n');
+  return buffer.toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 }
 
 function decodePayloadText(buffer) {
@@ -108,6 +114,32 @@ function decodePayloadText(buffer) {
 
 function payloadLabel(relativePath) {
   return `${PLUGIN_ROOT_PATH}/${relativePath}`;
+}
+
+// Checks and reads a file through one descriptor, so that the check and the read see the same file.
+function readCheckedFile(absolutePath, rejectReason) {
+  let descriptor;
+  try {
+    descriptor = openSync(absolutePath, OPEN_READ_FLAGS);
+  } catch (error) {
+    return { reason: `could not be opened as a regular file (${error.code ?? error.message}).` };
+  }
+  try {
+    const reason = rejectReason(fstatSync(descriptor));
+    return reason ? { reason } : { buffer: readFileSync(descriptor) };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function payloadRejectReason(fileStat) {
+  if (!fileStat.isFile()) {
+    return 'must be a regular file or directory.';
+  }
+  if (fileStat.nlink !== 1) {
+    return 'must not be hard-linked.';
+  }
+  return fileStat.size > PAYLOAD_FILE_MAX_BYTES ? `exceeds the ${PAYLOAD_FILE_MAX_BYTES}-byte file limit.` : null;
 }
 
 // Payload: every installed file must be an expected, regular, non-linked UTF-8 file.
@@ -124,17 +156,26 @@ function collectPayloadFiles(directory, relativeDirectory, files) {
       collectPayloadFiles(absolutePath, relativePath, files);
     } else if (entryStat.isDirectory()) {
       addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
-    } else if (!entryStat.isFile()) {
-      addError(`${payloadLabel(relativePath)} must be a regular file or directory.`);
-    } else if (entryStat.nlink !== 1) {
-      addError(`${payloadLabel(relativePath)} must not be hard-linked.`);
-    } else if (entryStat.size > PAYLOAD_FILE_MAX_BYTES) {
-      addError(`${payloadLabel(relativePath)} exceeds the ${PAYLOAD_FILE_MAX_BYTES}-byte file limit.`);
     } else {
       files.push(relativePath);
     }
   }
   return files;
+}
+
+function readPayloadFile(payload, relativePath) {
+  const label = payloadLabel(relativePath);
+  const { buffer, reason } = readCheckedFile(path.join(PLUGIN_ROOT, ...relativePath.split('/')), payloadRejectReason);
+  const contents = buffer ? decodePayloadText(buffer) : null;
+  if (reason) {
+    addError(`${label} ${reason}`);
+  } else if (contents === null) {
+    addError(`${label} is not valid UTF-8.`);
+  } else if (contents.startsWith('\uFEFF')) {
+    addError(`${label} must not start with a UTF-8 byte order mark.`);
+  } else {
+    payload.set(relativePath, contents);
+  }
 }
 
 function validatePayload() {
@@ -147,24 +188,18 @@ function validatePayload() {
   }
 
   const expectedFiles = new Set(PLUGIN_FILES);
-  const regularFiles = collectPayloadFiles(PLUGIN_ROOT, '', []);
-  for (const relativePath of regularFiles.filter((file) => !expectedFiles.has(file))) {
+  const candidates = collectPayloadFiles(PLUGIN_ROOT, '', []);
+  for (const relativePath of candidates.filter((file) => !expectedFiles.has(file))) {
     addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
   }
-  for (const relativePath of regularFiles.filter((file) => expectedFiles.has(file))) {
-    const contents = decodePayloadText(readFileSync(path.join(PLUGIN_ROOT, ...relativePath.split('/'))));
-    if (contents === null) {
-      addError(`${payloadLabel(relativePath)} is not valid UTF-8.`);
-    } else {
-      payload.set(relativePath, contents);
-    }
+  for (const relativePath of candidates.filter((file) => expectedFiles.has(file))) {
+    readPayloadFile(payload, relativePath);
   }
-  for (const relativePath of PLUGIN_FILES.filter((file) => !regularFiles.includes(file))) {
+  for (const relativePath of PLUGIN_FILES.filter((file) => !candidates.includes(file))) {
     addError(`${payloadLabel(relativePath)} is missing or is not a regular file.`);
   }
   return payload;
 }
-
 function readPayloadText(payload, relativePath) {
   return payload.get(relativePath) ?? null;
 }
@@ -426,27 +461,40 @@ function validateSingleCopy(inventory, payload) {
       addError(`${entry.relativePath} is plugin content outside ${PLUGIN_ROOT_PATH}; keep exactly one copy in the plugin root.`);
       continue;
     }
-    if (!entry.isFile || lstatSync(entry.absolutePath).size > maxCopyBytes) {
+    if (!entry.isFile) {
       continue;
     }
-    const duplicateOf = hashes.get(contentHash(normalizedText(readFileSync(entry.absolutePath))));
+    const { buffer } = readCheckedFile(entry.absolutePath, (fileStat) => (
+      !fileStat.isFile() || fileStat.size > maxCopyBytes ? 'skipped' : null));
+    const duplicateOf = buffer ? hashes.get(contentHash(normalizedText(buffer))) : undefined;
     if (duplicateOf) {
       addError(`${entry.relativePath} duplicates ${payloadLabel(duplicateOf)}; keep exactly one copy in the plugin root.`);
     }
   }
 }
 
+// Removes fenced code blocks and code spans, so that code examples are not read as links.
+// A code span does not cross a blank line, and an escaped backtick does not open one.
+function withoutCode(markdown) {
+  return markdown
+    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, '')
+    .replace(/(?<![\\`])(`+)(?!`)(?:[^\n]|\n(?![ \t]*\n))*?[^`]\1(?!`)/g, ' ');
+}
+
 function markdownDestinations(markdown) {
   const patterns = [
     // The destination after any link text, so that nested brackets cannot hide a link.
-    /\]\(\s*(<[^>]*>|(?:[^\s()]|\([^\s()]*\))+)/g,
-    /^\s*\[[^\]]+\]:\s*(<[^>]*>|\S+)/gm,
-    /\b(?:href|src)\s*=\s*["']([^"']*)["']/gi,
+    /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g,
+    // Reference definitions, also with escaped brackets in the label.
+    /^ {0,3}\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t]*(<[^>\n]*>|\S+)/gm,
+    // Attributes of HTML tags, with or without quotes.
+    /<[A-Za-z][A-Za-z0-9-]*\s[^>]*?\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
   ];
+  const text = withoutCode(markdown);
   const destinations = [];
   for (const pattern of patterns) {
-    for (const match of markdown.matchAll(pattern)) {
-      const destination = match[1];
+    for (const match of text.matchAll(pattern)) {
+      const destination = match.slice(1).find((group) => group !== undefined) ?? '';
       destinations.push(destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination);
     }
   }
