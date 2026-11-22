@@ -1,7 +1,8 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ai-team-orchestration",
   "description": "Run a lightweight, role-separated AI development team with flexible tools, developer-selected models, proportionate planning, and optional QA.",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "keywords": [
     "ai-team",
     "multi-agent",
@@ -15,7 +16,5 @@
     "name": "Denis Evdokimov"
   },
   "repository": "https://github.com/denis-a-evdokimov/ai-team-orchestration",
-  "license": "MIT",
-  "skills": "skills/",
-  "agents": "agents/"
+  "license": "MIT"
 }

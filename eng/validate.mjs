@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import {
-  existsSync,
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
-  statSync,
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,20 +14,75 @@ import { fileURLToPath } from 'node:url';
 import {
   assertManagedDirectory,
   createRootInfo,
+  isContainedPath,
 } from './path-safety.mjs';
-import {
-  assertCanonicalSyncManifest,
-  CANONICAL_AGENT_IDS,
-  CANONICAL_MANAGED_PLUGIN_FIELDS,
-  CANONICAL_PLUGIN_TARGET,
-} from './sync-manifest-contract.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXPECTED_AGENT_IDS = CANONICAL_AGENT_IDS;
-const EXPECTED_MANAGED_PLUGIN_FIELDS = CANONICAL_MANAGED_PLUGIN_FIELDS;
+const PLUGIN_NAME = 'ai-team-orchestration';
+const SKILL_NAME = 'ai-team-orchestration';
+const PLUGIN_ROOT_PATH = `plugins/${PLUGIN_NAME}`;
+const PLUGIN_ROOT = path.join(REPO_ROOT, ...PLUGIN_ROOT_PATH.split('/'));
+const AGENTS_PATH = 'com.github.copilot/agents';
+const SKILL_PATH = `skills/${SKILL_NAME}`;
+const EXPECTED_AGENT_IDS = Object.freeze([
+  'ai-team-dev',
+  'ai-team-producer',
+  'ai-team-qa',
+]);
+const SKILL_REFERENCES = Object.freeze([
+  'anti-patterns.md',
+  'brainstorm-format.md',
+  'project-brief-template.md',
+  'sprint-plan-template.md',
+]);
+// The plugin root is the installed payload. Installs copy every file in it.
+const PLUGIN_FILES = Object.freeze([
+  'README.md',
+  'plugin.json',
+  ...EXPECTED_AGENT_IDS.map((id) => `${AGENTS_PATH}/${id}.md`),
+  `${SKILL_PATH}/SKILL.md`,
+  ...SKILL_REFERENCES.map((fileName) => `${SKILL_PATH}/references/${fileName}`),
+].sort());
+const PLUGIN_DIRECTORIES = new Set(PLUGIN_FILES.flatMap((file) => {
+  const parts = file.split('/');
+  return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join('/'));
+}));
+// Keep a byte order mark visible: the Awesome Copilot gates reject a manifest that starts with one.
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+// O_NONBLOCK keeps a named pipe from blocking the open on POSIX systems.
+const OPEN_READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// Fail-closed path checks for plugin Markdown. They read the whole text, code included, so that
+// no link syntax can hide a path that leaves the installed plugin. Each form also matches when it
+// is percent-encoded or written as an HTML character reference.
+const ENCODED_DOT = String.raw`(?:\.|%2e|&#0*46;|&#x0*2e;|&period;)`;
+const ENCODED_SLASH = String.raw`(?:[\\/]|%2f|%5c|&#0*47;|&#x0*2f;|&sol;|&#0*92;|&#x0*5c;|&bsol;)`;
+// A parent segment is `..` that is not part of a longer name, followed by a slash or by the end of a path.
+const PARENT_PATH = new RegExp(String.raw`(?<![\w.~%;-])${ENCODED_DOT}${ENCODED_DOT}(?=${ENCODED_SLASH}|[)\]>"'\s#?]|$)`, 'im');
+const ROOT_RELATIVE_PATH = new RegExp(String.raw`(?:\]\(\s*<?\s*|\]:\s*<?\s*|=\s*["']?\s*)${ENCODED_SLASH}(?!${ENCODED_SLASH})`, 'i');
+const RESERVED_FILE_NAMES = new Set([
+  'plugin.json',
+  'SKILL.md',
+  ...EXPECTED_AGENT_IDS.map((id) => `${id}.md`),
+]);
+const AGENT_FRONTMATTER_FIELDS = new Set(['name', 'description', 'include-custom-instructions']);
+const SKILL_FRONTMATTER_FIELDS = new Set(['name', 'description']);
+const AGENT_PLUGIN_SCHEMA_URL = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
+const AGENT_PLUGIN_FIELDS = new Set([
+  '$schema',
+  'name',
+  'version',
+  'description',
+  'author',
+  'homepage',
+  'repository',
+  'license',
+  'keywords',
+  'extensions',
+]);
+const AGENT_PLUGIN_AUTHOR_FIELDS = new Set(['name', 'email', 'url']);
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
 const DESCRIPTION_MAX_LENGTH = 1024;
-const SKILL_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const PAYLOAD_FILE_MAX_BYTES = 5 * 1024 * 1024;
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const TEXT_EXTENSIONS = new Set([
   '.cjs',
@@ -39,68 +97,161 @@ const TEXT_EXTENSIONS = new Set([
 
 const errors = [];
 
-function repoPath(filePath) {
-  return path.relative(REPO_ROOT, filePath).split(path.sep).join('/');
-}
-
 function addError(message) {
   errors.push(message);
 }
 
-function readJson(filePath, label) {
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizedText(buffer) {
+  return buffer.toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+}
+
+function decodePayloadText(buffer) {
   try {
-    return JSON.parse(readFileSync(filePath, 'utf8'));
-  } catch (error) {
-    addError(`${label} is not valid JSON: ${error.message}`);
+    return UTF8_DECODER.decode(buffer).replace(/\r\n?/g, '\n');
+  } catch {
     return null;
   }
 }
 
-function sameArray(actual, expected) {
-  return Array.isArray(actual)
-    && actual.length === expected.length
-    && actual.every((value, index) => value === expected[index]);
+function payloadLabel(relativePath) {
+  return `${PLUGIN_ROOT_PATH}/${relativePath}`;
 }
 
-function parseFrontmatter(filePath, allowedFields) {
-  const contents = readFileSync(filePath, 'utf8').replace(/\r\n?/g, '\n');
-  const lines = contents.split('\n');
+// Checks and reads a file through one descriptor, so that the check and the read see the same file.
+function readCheckedFile(absolutePath, rejectReason) {
+  let descriptor;
+  try {
+    descriptor = openSync(absolutePath, OPEN_READ_FLAGS);
+    const reason = rejectReason(fstatSync(descriptor));
+    return reason ? { reason } : { buffer: readFileSync(descriptor) };
+  } catch (error) {
+    return { error: error.code ?? error.message };
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
 
+function payloadRejectReason(fileStat) {
+  if (!fileStat.isFile()) {
+    return 'must be a regular file or directory.';
+  }
+  if (fileStat.nlink !== 1) {
+    return 'must not be hard-linked.';
+  }
+  return fileStat.size > PAYLOAD_FILE_MAX_BYTES ? `exceeds the ${PAYLOAD_FILE_MAX_BYTES}-byte file limit.` : null;
+}
+
+// Payload: every installed file must be an expected, regular, non-linked UTF-8 file.
+// Later checks read plugin files only through the vetted payload map.
+
+function collectPayloadFiles(directory, relativeDirectory, files) {
+  for (const name of readdirSync(directory).sort()) {
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+    const absolutePath = path.join(directory, name);
+    const entryStat = lstatSync(absolutePath);
+    if (entryStat.isSymbolicLink()) {
+      addError(`${payloadLabel(relativePath)} must not be a symbolic link, junction, or reparse point.`);
+    } else if (entryStat.isDirectory() && PLUGIN_DIRECTORIES.has(relativePath)) {
+      collectPayloadFiles(absolutePath, relativePath, files);
+    } else if (entryStat.isDirectory()) {
+      addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
+    } else if (!entryStat.isFile()) {
+      addError(`${payloadLabel(relativePath)} must be a regular file or directory.`);
+    } else {
+      files.push(relativePath);
+    }
+  }
+  return files;
+}
+
+function readPayloadFile(payload, relativePath) {
+  const label = payloadLabel(relativePath);
+  const { buffer, reason, error } = readCheckedFile(path.join(PLUGIN_ROOT, ...relativePath.split('/')), payloadRejectReason);
+  const contents = buffer ? decodePayloadText(buffer) : null;
+  if (error) {
+    addError(`${label} could not be read (${error}).`);
+  } else if (reason) {
+    addError(`${label} ${reason}`);
+  } else if (contents === null) {
+    addError(`${label} is not valid UTF-8.`);
+  } else if (contents.startsWith('\uFEFF')) {
+    addError(`${label} must not start with a UTF-8 byte order mark.`);
+  } else {
+    payload.set(relativePath, contents);
+  }
+}
+
+function validatePayload() {
+  const payload = new Map();
+  try {
+    assertManagedDirectory(createRootInfo(REPO_ROOT, 'Repository root'), PLUGIN_ROOT_PATH, PLUGIN_ROOT_PATH);
+  } catch (error) {
+    addError(error.message);
+    return payload;
+  }
+
+  const expectedFiles = new Set(PLUGIN_FILES);
+  const candidates = collectPayloadFiles(PLUGIN_ROOT, '', []);
+  for (const relativePath of candidates.filter((file) => !expectedFiles.has(file))) {
+    addError(`${payloadLabel(relativePath)} is not part of the plugin file set. Installs copy every file in ${PLUGIN_ROOT_PATH}.`);
+  }
+  for (const relativePath of candidates.filter((file) => expectedFiles.has(file))) {
+    readPayloadFile(payload, relativePath);
+  }
+  for (const relativePath of PLUGIN_FILES.filter((file) => !candidates.includes(file))) {
+    addError(`${payloadLabel(relativePath)} is missing or is not a regular file.`);
+  }
+  return payload;
+}
+function readPayloadText(payload, relativePath) {
+  return payload.get(relativePath) ?? null;
+}
+
+// Frontmatter: the constrained subset that this repository relies on.
+
+function parseFrontmatter(contents, label, allowedFields) {
+  const lines = contents.split('\n');
   if (lines[0] !== '---') {
-    addError(`${repoPath(filePath)} must start with YAML frontmatter.`);
+    addError(`${label} must start with YAML frontmatter.`);
     return null;
   }
 
   const closingIndex = lines.indexOf('---', 1);
   if (closingIndex === -1) {
-    addError(`${repoPath(filePath)} has unterminated YAML frontmatter.`);
+    addError(`${label} has unterminated YAML frontmatter.`);
     return null;
   }
 
   const fields = new Map();
-  for (let index = 1; index < closingIndex; index += 1) {
-    if (lines[index].trim() === '') {
-      continue;
-    }
-    const match = /^([A-Za-z][A-Za-z0-9-]*):(?:[ \t]+(.*))?$/.exec(lines[index]);
+  const fieldLines = lines.slice(1, closingIndex);
+  for (const line of fieldLines.filter((candidate) => candidate.trim() !== '')) {
+    const match = /^([A-Za-z][A-Za-z0-9-]*):(?:[ \t]+(.*))?$/.exec(line);
     if (!match) {
-      addError(`${repoPath(filePath)} contains unsupported frontmatter syntax: ${lines[index]}`);
+      addError(`${label} contains unsupported frontmatter syntax: ${line}`);
       continue;
     }
 
     const [, key, value = ''] = match;
     if (fields.has(key)) {
-      addError(`${repoPath(filePath)} has duplicate frontmatter field "${key}".`);
-      continue;
+      addError(`${label} has duplicate frontmatter field "${key}".`);
+    } else if (!allowedFields.has(key)) {
+      addError(`${label} contains unsupported frontmatter field "${key}".`);
+    } else {
+      fields.set(key, value.replace(/[ \t]+$/, ''));
     }
-    if (!allowedFields.has(key)) {
-      addError(`${repoPath(filePath)} contains unsupported frontmatter field "${key}".`);
-      continue;
-    }
-    fields.set(key, value.replace(/[ \t]+$/, ''));
   }
 
-  return fields;
+  return { fields, fieldLines };
 }
 
 function scalarValue(value) {
@@ -121,270 +272,460 @@ function quotedValue(value) {
   return match ? match[2] : null;
 }
 
-function validatePlugin() {
-  const pluginPath = path.join(REPO_ROOT, 'plugin.json');
-  const plugin = readJson(pluginPath, 'plugin.json');
-  if (!plugin) {
+// Manifest: Agent Plugins 1.0 fields only.
+
+function loadManifest(payload) {
+  const contents = readPayloadText(payload, 'plugin.json');
+  if (contents === null) {
     return null;
   }
 
-  const requiredStringFields = [
-    'name',
-    'description',
-    'version',
-    'repository',
-    'license',
-    'skills',
-    'agents',
-  ];
-  for (const field of requiredStringFields) {
-    if (typeof plugin[field] !== 'string' || plugin[field].trim() === '') {
-      addError(`plugin.json field "${field}" must be a non-empty string.`);
-    }
-  }
-
-  if (typeof plugin.name === 'string'
-    && (plugin.name.length > 50 || !SLUG_PATTERN.test(plugin.name))) {
-    addError('plugin.json field "name" must be a lowercase slug no longer than 50 characters.');
-  }
-  if (typeof plugin.description === 'string'
-    && plugin.description.length > 500) {
-    addError('plugin.json field "description" must not exceed 500 characters.');
-  }
-  if (!SEMVER_PATTERN.test(plugin.version ?? '')) {
-    addError(`plugin.json version "${plugin.version ?? ''}" is not valid SemVer.`);
-  }
-
-  if (!Array.isArray(plugin.keywords)
-    || plugin.keywords.length === 0
-    || plugin.keywords.length > 10
-    || plugin.keywords.some((keyword) => typeof keyword !== 'string'
-      || keyword.length < 1
-      || keyword.length > 30
-      || !SLUG_PATTERN.test(keyword))) {
-    addError('plugin.json field "keywords" must contain 1-10 lowercase slugs no longer than 30 characters.');
-  }
-
-  const validAuthor = (typeof plugin.author === 'string' && plugin.author.trim() !== '')
-    || (plugin.author
-      && typeof plugin.author === 'object'
-      && typeof plugin.author.name === 'string'
-      && plugin.author.name.trim() !== '');
-  if (!validAuthor) {
-    addError('plugin.json field "author" must be a non-empty string or an object with a non-empty name.');
-  }
-
-  let rootInfo = null;
+  let manifest;
   try {
-    rootInfo = createRootInfo(REPO_ROOT, 'Repository root');
+    manifest = JSON.parse(contents);
   } catch (error) {
-    addError(error.message);
+    addError(`${payloadLabel('plugin.json')} is not valid JSON: ${error.message}`);
+    return null;
   }
-  for (const field of ['skills', 'agents']) {
-    if (typeof plugin[field] !== 'string' || plugin[field].trim() === '') {
-      continue;
-    }
-
-    if (plugin[field] !== `${field}/`) {
-      addError(`plugin.json field "${field}" must be exactly "${field}/".`);
-      continue;
-    }
-    if (rootInfo) {
-      try {
-        assertManagedDirectory(rootInfo, field, `plugin.json field "${field}"`);
-      } catch (error) {
-        addError(error.message);
-      }
-    }
+  if (!isPlainObject(manifest)) {
+    addError(`${payloadLabel('plugin.json')} must contain a JSON object.`);
+    return null;
   }
-
-  return plugin;
+  return manifest;
 }
 
-function validateAgents() {
-  const agentsDirectory = path.join(REPO_ROOT, 'agents');
-  if (!existsSync(agentsDirectory) || !statSync(agentsDirectory).isDirectory()) {
-    addError('Required agents/ directory is missing.');
-    return [];
+function validateManifestIdentity(manifest, label) {
+  for (const field of Object.keys(manifest).filter((key) => !AGENT_PLUGIN_FIELDS.has(key))) {
+    addError(`${label} top-level field "${field}" is not part of Agent Plugins 1.0.`);
   }
-  const agentFiles = readdirSync(agentsDirectory)
-    .filter((fileName) => fileName.endsWith('.agent.md'))
-    .sort();
-  const actualIds = agentFiles.map((fileName) => fileName.slice(0, -'.agent.md'.length));
-
-  if (!sameArray(actualIds, EXPECTED_AGENT_IDS)) {
-    addError(`agents/ must contain exactly these agent IDs: ${EXPECTED_AGENT_IDS.join(', ')}; found: ${actualIds.join(', ') || '(none)'}.`);
+  if (manifest.$schema !== AGENT_PLUGIN_SCHEMA_URL) {
+    addError(`${label} field "$schema" must be exactly "${AGENT_PLUGIN_SCHEMA_URL}".`);
   }
-
-  for (const fileName of agentFiles) {
-    const filePath = path.join(agentsDirectory, fileName);
-    const fileStat = lstatSync(filePath);
-    if (!fileStat.isFile() || fileStat.isSymbolicLink() || fileStat.nlink !== 1) {
-      addError(`${repoPath(filePath)} must be a non-hard-linked regular file.`);
-      continue;
-    }
-    const fields = parseFrontmatter(filePath, new Set(['name', 'description', 'include-custom-instructions']));
-    if (!fields) {
-      continue;
-    }
-
-    const fileId = fileName.slice(0, -'.agent.md'.length);
-    const frontmatterName = quotedValue(fields.get('name'));
-    if (frontmatterName === null) {
-      addError(`${repoPath(filePath)} frontmatter name must be quoted.`);
-    } else if (frontmatterName !== fileId) {
-      addError(`${repoPath(filePath)} filename ID "${fileId}" does not match frontmatter name "${frontmatterName}".`);
-    }
-
-    const description = quotedValue(fields.get('description'));
-    if (description === null || description.trim() === '' || description.length > DESCRIPTION_MAX_LENGTH) {
-      addError(`${repoPath(filePath)} frontmatter description must be matching-quoted, non-empty, and no longer than ${DESCRIPTION_MAX_LENGTH} characters.`);
-    }
-
-    if (fields.get('include-custom-instructions') !== 'true') {
-      addError(`${repoPath(filePath)} frontmatter must contain exactly "include-custom-instructions: true".`);
-    }
-  }
-
-  return actualIds;
-}
-
-function validateSkillTree(skillDirectory) {
-  for (const entry of readdirSync(skillDirectory, { withFileTypes: true })) {
-    const entryPath = path.join(skillDirectory, entry.name);
-    const entryStat = lstatSync(entryPath);
-    if (entryStat.isSymbolicLink()) {
-      addError(`${repoPath(entryPath)} must not be a symbolic link, junction, or reparse point.`);
-    } else if (entryStat.isDirectory()) {
-      validateSkillTree(entryPath);
-    } else if (entryStat.isFile()) {
-      if (entryStat.nlink !== 1) {
-        addError(`${repoPath(entryPath)} must not be hard-linked.`);
-      }
-      if (entryStat.size > SKILL_FILE_MAX_BYTES) {
-        addError(`${repoPath(entryPath)} exceeds the ${SKILL_FILE_MAX_BYTES}-byte skill file limit.`);
-      }
-    } else {
-      addError(`${repoPath(entryPath)} must be a regular file or directory.`);
-    }
+  if (manifest.name !== PLUGIN_NAME) {
+    addError(`${label} field "name" must be exactly "${PLUGIN_NAME}".`);
   }
 }
 
-function validateSkills() {
-  const skillsDirectory = path.join(REPO_ROOT, 'skills');
-  if (!existsSync(skillsDirectory) || !statSync(skillsDirectory).isDirectory()) {
-    addError('Required skills/ directory is missing.');
-    return [];
-  }
-  const skillNames = readdirSync(skillsDirectory, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  for (const folderName of skillNames) {
-    if (!SLUG_PATTERN.test(folderName) || folderName.length > 64) {
-      addError(`skills/${folderName} folder name must be a lowercase slug no longer than 64 characters.`);
-    }
-    const skillDirectory = path.join(skillsDirectory, folderName);
-    validateSkillTree(skillDirectory);
-    const skillPath = path.join(skillDirectory, 'SKILL.md');
-    if (!existsSync(skillPath)) {
-      addError(`skills/${folderName} is missing SKILL.md.`);
-      continue;
-    }
-
-    const fields = parseFrontmatter(skillPath, new Set(['name', 'description']));
-    if (!fields) {
-      continue;
-    }
-
-    const frontmatterName = scalarValue(fields.get('name'));
-    if (!frontmatterName) {
-      addError(`${repoPath(skillPath)} must have a non-empty frontmatter name.`);
-    } else if (frontmatterName !== folderName) {
-      addError(`${repoPath(skillPath)} frontmatter name "${frontmatterName}" must match folder name "${folderName}".`);
-    }
-    if (folderName === 'ai-team') {
-      const lines = readFileSync(skillPath, 'utf8').replace(/\r\n?/g, '\n').split('\n');
-      const closingIndex = lines.indexOf('---', 1);
-      const nameLines = lines
-        .slice(1, closingIndex)
-        .filter((line) => /^\s*name\s*:/.test(line));
-      if (nameLines.length !== 1 || nameLines[0] !== 'name: ai-team') {
-        addError(`${repoPath(skillPath)} canonical frontmatter name line must be exactly "name: ai-team".`);
-      }
-    }
-
-    const description = quotedValue(fields.get('description'));
-    if (description === null || description.length < 10 || description.length > DESCRIPTION_MAX_LENGTH) {
-      addError(`${repoPath(skillPath)} frontmatter description must be matching-quoted and between 10 and ${DESCRIPTION_MAX_LENGTH} characters.`);
+function validateManifestStrings(manifest, label) {
+  for (const field of ['description', 'version', 'repository', 'license']) {
+    if (!isNonEmptyString(manifest[field])) {
+      addError(`${label} field "${field}" must be a non-empty string.`);
     }
   }
-
-  return skillNames;
+  if (typeof manifest.description === 'string' && manifest.description.length > 500) {
+    addError(`${label} field "description" must not exceed 500 characters.`);
+  }
+  if (typeof manifest.version === 'string' && !SEMVER_PATTERN.test(manifest.version)) {
+    addError(`${label} version "${manifest.version}" is not valid SemVer.`);
+  }
 }
 
-function walkFiles(directory, relativeDirectory = '') {
-  const files = [];
+function validateManifestLinks(manifest, label) {
+  if (isNonEmptyString(manifest.repository) && !manifest.repository.startsWith('https://github.com/')) {
+    addError(`${label} field "repository" must be an https://github.com/ URL.`);
+  }
+  if (manifest.homepage !== undefined && !isNonEmptyString(manifest.homepage)) {
+    addError(`${label} field "homepage" must be a non-empty string when present.`);
+  }
+  if (manifest.extensions !== undefined
+    && (!isPlainObject(manifest.extensions) || !Object.values(manifest.extensions).every(isPlainObject))) {
+    addError(`${label} field "extensions" must map namespaces to objects.`);
+  }
+}
+
+function isValidKeyword(keyword) {
+  return typeof keyword === 'string'
+    && keyword.length >= 1
+    && keyword.length <= 30
+    && SLUG_PATTERN.test(keyword);
+}
+
+function validateManifestPeople(manifest, label) {
+  const { keywords, author } = manifest;
+  if (!Array.isArray(keywords) || keywords.length === 0 || keywords.length > 10 || !keywords.every(isValidKeyword)) {
+    addError(`${label} field "keywords" must contain 1-10 lowercase slugs no longer than 30 characters.`);
+  }
+
+  const validAuthor = isPlainObject(author)
+    && isNonEmptyString(author.name)
+    && Object.entries(author).every(([field, value]) => AGENT_PLUGIN_AUTHOR_FIELDS.has(field) && typeof value === 'string');
+  if (!validAuthor) {
+    addError(`${label} field "author" must be an object with a non-empty name and only string name, email, and url fields.`);
+  }
+}
+
+function validateManifest(payload) {
+  const manifest = loadManifest(payload);
+  if (!manifest) {
+    return;
+  }
+
+  const label = payloadLabel('plugin.json');
+  validateManifestIdentity(manifest, label);
+  validateManifestStrings(manifest, label);
+  validateManifestLinks(manifest, label);
+  validateManifestPeople(manifest, label);
+}
+
+// Agents and skill.
+
+function validateAgent(payload, agentId) {
+  const relativePath = `${AGENTS_PATH}/${agentId}.md`;
+  const contents = readPayloadText(payload, relativePath);
+  const label = payloadLabel(relativePath);
+  const frontmatter = contents === null ? null : parseFrontmatter(contents, label, AGENT_FRONTMATTER_FIELDS);
+  if (!frontmatter) {
+    return;
+  }
+
+  const { fields } = frontmatter;
+  const frontmatterName = quotedValue(fields.get('name'));
+  if (frontmatterName === null) {
+    addError(`${label} frontmatter name must be quoted.`);
+  } else if (frontmatterName !== agentId) {
+    addError(`${label} filename ID "${agentId}" does not match frontmatter name "${frontmatterName}".`);
+  }
+
+  const description = quotedValue(fields.get('description'));
+  if (description === null || description.trim() === '' || description.length > DESCRIPTION_MAX_LENGTH) {
+    addError(`${label} frontmatter description must be matching-quoted, non-empty, and no longer than ${DESCRIPTION_MAX_LENGTH} characters.`);
+  }
+
+  if (fields.get('include-custom-instructions') !== 'true') {
+    addError(`${label} frontmatter must contain exactly "include-custom-instructions: true".`);
+  }
+}
+
+function validateSkill(payload) {
+  const relativePath = `${SKILL_PATH}/SKILL.md`;
+  const contents = readPayloadText(payload, relativePath);
+  const label = payloadLabel(relativePath);
+  const frontmatter = contents === null ? null : parseFrontmatter(contents, label, SKILL_FRONTMATTER_FIELDS);
+  if (!frontmatter) {
+    return;
+  }
+
+  const { fields, fieldLines } = frontmatter;
+  const frontmatterName = scalarValue(fields.get('name'));
+  if (frontmatterName !== SKILL_NAME) {
+    addError(`${label} frontmatter name "${frontmatterName ?? ''}" must match folder name "${SKILL_NAME}".`);
+  }
+  const nameLines = fieldLines.filter((line) => /^\s*name\s*:/.test(line));
+  if (nameLines.length !== 1 || nameLines[0] !== `name: ${SKILL_NAME}`) {
+    addError(`${label} frontmatter name line must be exactly "name: ${SKILL_NAME}".`);
+  }
+
+  const description = quotedValue(fields.get('description'));
+  if (description === null || description.length < 10 || description.length > DESCRIPTION_MAX_LENGTH) {
+    addError(`${label} frontmatter description must be matching-quoted and between 10 and ${DESCRIPTION_MAX_LENGTH} characters.`);
+  }
+}
+
+// Repository: one copy of the plugin, valid links, and no legacy references.
+// Plugin files are read only through the vetted payload map.
+
+function walkRepository(directory, relativeDirectory, inventory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (relativeDirectory === '' && (entry.name === '.git' || entry.name === 'node_modules')) {
       continue;
     }
 
-    const relativePath = path.join(relativeDirectory, entry.name);
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      files.push(...walkFiles(absolutePath, relativePath));
-    } else if (entry.isFile()) {
-      files.push(path.join(REPO_ROOT, relativePath));
+      inventory.directories.add(relativePath);
+      walkRepository(absolutePath, relativePath, inventory);
+    } else {
+      inventory.entries.push({ absolutePath, relativePath, isFile: entry.isFile() });
+      if (entry.isFile()) {
+        inventory.files.add(relativePath);
+      }
     }
   }
-  return files.sort();
+  return inventory;
 }
 
-function markdownDestinations(markdown) {
-  const destinations = [];
-  const inlinePattern = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+['"][^'"]*['"])?\s*\)/g;
-  const definitionPattern = /^\s*\[[^\]]+\]:\s*(<[^>]+>|\S+)/gm;
+function pluginRelativePath(absolutePath) {
+  return isContainedPath(PLUGIN_ROOT, absolutePath, false)
+    ? path.relative(PLUGIN_ROOT, absolutePath).split(path.sep).join('/')
+    : null;
+}
 
-  for (const pattern of [inlinePattern, definitionPattern]) {
-    for (const match of markdown.matchAll(pattern)) {
-      destinations.push(match[1]);
+const unreadableEntries = new Set();
+
+function reportUnreadable(entry, error) {
+  if (!unreadableEntries.has(entry.relativePath)) {
+    unreadableEntries.add(entry.relativePath);
+    addError(`${entry.relativePath} could not be read (${error}).`);
+  }
+}
+
+// Returns the text of a repository file. A plugin file is returned only if it passed the payload checks.
+function entryText(entry, payload) {
+  const relativePath = pluginRelativePath(entry.absolutePath);
+  if (relativePath !== null) {
+    return readPayloadText(payload, relativePath);
+  }
+  if (!entry.isFile) {
+    return null;
+  }
+  const { buffer, error } = readCheckedFile(entry.absolutePath, (fileStat) => (fileStat.isFile() ? null : 'skipped'));
+  if (error) {
+    reportUnreadable(entry, error);
+  }
+  return buffer ? buffer.toString('utf8') : null;
+}
+
+function contentHash(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function findCopy(entry, hashes, maxCopyBytes) {
+  const { buffer, error } = readCheckedFile(entry.absolutePath, (fileStat) => (
+    !fileStat.isFile() || fileStat.size > maxCopyBytes ? 'skipped' : null));
+  if (error) {
+    reportUnreadable(entry, error);
+  }
+  return buffer ? hashes.get(contentHash(normalizedText(buffer))) : undefined;
+}
+
+function validateSingleCopy(inventory, payload) {
+  const hashes = new Map([...payload].map(([relativePath, contents]) => [contentHash(contents), relativePath]));
+  // Line-ending normalization at most halves a copy, so a larger file cannot be a copy.
+  const maxCopyBytes = 2 * Math.max(0, ...[...payload.values()].map((contents) => Buffer.byteLength(contents)));
+  for (const entry of inventory.entries.filter((candidate) => pluginRelativePath(candidate.absolutePath) === null)) {
+    const fileName = path.posix.basename(entry.relativePath);
+    if (RESERVED_FILE_NAMES.has(fileName) || fileName.endsWith('.agent.md')) {
+      addError(`${entry.relativePath} is plugin content outside ${PLUGIN_ROOT_PATH}; keep exactly one copy in the plugin root.`);
+      continue;
+    }
+    const duplicateOf = entry.isFile ? findCopy(entry, hashes, maxCopyBytes) : undefined;
+    if (duplicateOf) {
+      addError(`${entry.relativePath} duplicates ${payloadLabel(duplicateOf)}; keep exactly one copy in the plugin root.`);
     }
   }
-  return destinations;
 }
 
-function validateMarkdownLinks(files) {
-  for (const filePath of files.filter((candidate) => candidate.endsWith('.md'))) {
-    const markdown = readFileSync(filePath, 'utf8');
-    for (let destination of markdownDestinations(markdown)) {
-      if (destination.startsWith('<') && destination.endsWith('>')) {
-        destination = destination.slice(1, -1);
-      }
+// Link forms. The check reads them in the raw text, code examples included: a scan that skips code
+// must agree with the Markdown parser of every client, and a difference can hide a link. In plugin
+// Markdown, a URL attribute counts also outside a well-formed tag, for the same reason. As in the HTML
+// tokenizer, an attribute name follows white space, a slash or a quote, only ASCII white space can
+// surround `=`, and an unquoted value ends only at ASCII white space or `>`. A name in the path of a
+// full URL, as in `https://example.com/src=x`, is not an attribute. A link ends only at ASCII white
+// space or an ASCII control character, never at other white space such as U+00A0. Thus the patterns
+// that end a link do not use `\s`.
+const URL_ATTRIBUTE = /(?<=[\s/"'])(?<![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\x00-\x20"'<>]*)(action|background|cite|data|formaction|href|poster|src|srcset|xlink:href)[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'>][^\t\n\f\r >]*))/gi;
+const HTML_TAG = /<[A-Za-z](?:[^<>"']|"[^"]*"|'[^']*')*>/g;
+// CommonMark allows spaces, tabs and one line break before a destination.
+const INLINE_LINK_START = /\]\([ \t]*(?:\n[ \t]*)?/g;
+const ANGLE_DESTINATION_AT = /<[^<>\n]*>/y;
+const ESCAPABLE = /[!-/:-@[-`{-~]/;
+const DESTINATION_END = /[\x00-\x20\x7F]/;
+// Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
+const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|[^\x00-\x20\x7F]+)/gm;
+// An autolink, such as `<https://example.com>`. Its content is literal.
+const AUTOLINK = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20\x7F<>]*)>/g;
+// A file URL or a Windows drive path, also a drive-relative one such as `C:notes.md`. It never points
+// into an installed plugin.
+const LOCAL_FILE_DESTINATION = /^(?:file:|[A-Za-z]:)/i;
 
-      if (!destination
-        || destination.startsWith('#')
-        || destination.startsWith('/')
-        || destination.startsWith('//')
-        || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination)) {
-        continue;
+// Returns the end of an inline link destination without angle brackets. It ends at a space, at an
+// ASCII control character, or at a `)` that closes no `(`. An escaped parenthesis does not count.
+function rawDestinationEnd(text, begin) {
+  let depth = 0;
+  let index = begin;
+  while (index < text.length && !DESTINATION_END.test(text[index])) {
+    const character = text[index];
+    if (character === '\\' && ESCAPABLE.test(text[index + 1] ?? '')) {
+      index += 1;
+    } else if (character === '(') {
+      depth += 1;
+    } else if (character === ')') {
+      if (depth === 0) {
+        break;
       }
+      depth -= 1;
+    }
+    index += 1;
+  }
+  return index;
+}
 
-      const pathPart = destination.split(/[?#]/, 1)[0];
-      let decodedPath;
-      try {
-        decodedPath = decodeURIComponent(pathPart);
-      } catch {
-        addError(`${repoPath(filePath)} has an invalid encoded Markdown link: ${destination}`);
-        continue;
-      }
+function inlineDestinations(text) {
+  return [...text.matchAll(INLINE_LINK_START)].map((start) => {
+    const begin = start.index + start[0].length;
+    ANGLE_DESTINATION_AT.lastIndex = begin;
+    const angle = ANGLE_DESTINATION_AT.exec(text);
+    return angle ? angle[0] : text.slice(begin, rawDestinationEnd(text, begin));
+  });
+}
 
-      const resolvedPath = path.resolve(path.dirname(filePath), decodedPath);
-      const relativePath = path.relative(REPO_ROOT, resolvedPath);
-      if (relativePath.startsWith('..') || path.isAbsolute(relativePath) || !existsSync(resolvedPath)) {
-        addError(`${repoPath(filePath)} has an unresolved relative Markdown link: ${destination}`);
+// Reads the candidate URLs of a srcset value. A URL can contain commas, for example a data URL.
+// ASCII white space separates the parts.
+function srcsetUrls(value) {
+  const urls = [];
+  let rest = value;
+  while (rest.replace(/^[\t\n\f\r ,]+/, '') !== '') {
+    rest = rest.replace(/^[\t\n\f\r ,]+/, '');
+    const url = /^[^\t\n\f\r ]+/.exec(rest)[0];
+    const trimmedUrl = url.replace(/,+$/, '');
+    urls.push(trimmedUrl);
+    rest = rest.slice(url.length);
+    if (trimmedUrl === url) {
+      const comma = rest.indexOf(',');
+      rest = comma === -1 ? '' : rest.slice(comma + 1);
+    }
+  }
+  return urls;
+}
+
+// Named character references that can change a path.
+const NAMED_REFERENCES = new Map(Object.entries({
+  amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', gt: '>', lt: '<', newline: '\n', num: '#',
+  percnt: '%', period: '.', quest: '?', quot: '"', sol: '/', tab: '\t',
+}));
+// A character reference. A browser also decodes numeric references with more digits than CommonMark.
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9A-Fa-f]+)|([A-Za-z][A-Za-z0-9]{1,31}));/g;
+// A backslash escape or a character reference. A Markdown client decodes both in one pass.
+const ESCAPE_OR_REFERENCE = /\\([!-/:-@[-`{-~])|&(?:#(\d+)|#[xX]([0-9A-Fa-f]+)|([A-Za-z][A-Za-z0-9]{1,31}));/g;
+
+function decodeReference(reference, decimal, hex, name) {
+  if (name !== undefined) {
+    return NAMED_REFERENCES.get(name.toLowerCase()) ?? reference;
+  }
+  const codePoint = Number.parseInt(decimal ?? hex, decimal === undefined ? 16 : 10);
+  return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\uFFFD';
+}
+
+// HTML decodes character references only. A backslash stays.
+function decodeHtml(text) {
+  return text.replace(CHARACTER_REFERENCE, decodeReference);
+}
+
+function unescapeMarkdown(text) {
+  return text.replace(ESCAPE_OR_REFERENCE, (match, escaped, decimal, hex, name) => (
+    escaped === undefined ? decodeReference(match, decimal, hex, name) : escaped));
+}
+
+function attributeDestinations(text) {
+  return [...text.matchAll(URL_ATTRIBUTE)].flatMap((match) => {
+    // A browser decodes character references before it splits srcset candidates.
+    const value = decodeHtml(match[2] ?? match[3] ?? match[4]);
+    return match[1].toLowerCase() === 'srcset' ? srcsetUrls(value) : [value];
+  });
+}
+
+function markdownLinkDestinations(text) {
+  const definitions = [...text.matchAll(REFERENCE_DEFINITION)].map((match) => match[1]);
+  const destinations = [...definitions, ...inlineDestinations(text)].map((destination) => unescapeMarkdown(
+    destination.startsWith('<') && destination.endsWith('>') ? destination.slice(1, -1) : destination));
+  return [...destinations, ...[...text.matchAll(AUTOLINK)].map((match) => match[1])];
+}
+
+// Returns a target as a URL parser reads it: without tabs and line breaks, and without ASCII control
+// characters and spaces at its ends. Other white space, such as U+00A0, stays.
+function urlParserView(destination) {
+  const value = destination.replace(/[\t\n\r]/g, '');
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) <= 0x20) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
+// Every link form counts, also in a code example. Thus an example uses an existing target or a full URL.
+// Repository Markdown reads URL attributes only in HTML tags, so that code such as `data = x` is not a link.
+function markdownDestinations(markdown, inPlugin) {
+  const text = markdown.replace(/\r\n?/g, '\n');
+  const attributes = inPlugin
+    ? attributeDestinations(text)
+    : [...text.matchAll(HTML_TAG)].flatMap((tag) => attributeDestinations(tag[0]));
+  return [...attributes, ...markdownLinkDestinations(text)].map(urlParserView);
+}
+
+function isExternalDestination(destination) {
+  return !destination
+    || destination.startsWith('#')
+    || destination.startsWith('//')
+    || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination);
+}
+
+function linkTargetExists(inventory, payload, resolvedPath, inPlugin) {
+  if (inPlugin) {
+    const relativePath = path.relative(PLUGIN_ROOT, resolvedPath).split(path.sep).join('/');
+    return relativePath === '' || payload.has(relativePath) || PLUGIN_DIRECTORIES.has(relativePath);
+  }
+  const relativePath = path.relative(REPO_ROOT, resolvedPath).split(path.sep).join('/');
+  return relativePath === '' || inventory.files.has(relativePath) || inventory.directories.has(relativePath);
+}
+
+function decodeLinkPath(entry, destination) {
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(destination.split(/[?#]/, 1)[0]);
+  } catch {
+    decodedPath = null;
+  }
+  if (decodedPath === null || decodedPath.includes('\0')) {
+    addError(`${entry.relativePath} has an invalid encoded Markdown link: ${destination}`);
+    return null;
+  }
+  return decodedPath;
+}
+
+function validateLink(entry, destination, inventory, payload) {
+  const decodedPath = decodeLinkPath(entry, destination);
+  if (decodedPath === null) {
+    return;
+  }
+
+  const inPlugin = pluginRelativePath(entry.absolutePath) !== null;
+  const rootRelative = decodedPath.startsWith('/');
+  if (inPlugin && rootRelative) {
+    addError(`${entry.relativePath} has a root-relative link, which installed copies cannot resolve: ${destination}`);
+    return;
+  }
+
+  const resolvedPath = rootRelative
+    ? path.join(REPO_ROOT, ...decodedPath.split('/'))
+    : path.resolve(path.dirname(entry.absolutePath), decodedPath);
+  const allowedRoot = inPlugin ? PLUGIN_ROOT : REPO_ROOT;
+  if (!isContainedPath(allowedRoot, resolvedPath, true)) {
+    addError(inPlugin
+      ? `${entry.relativePath} links outside ${PLUGIN_ROOT_PATH}, which installed copies do not contain: ${destination}`
+      : `${entry.relativePath} has an unresolved relative Markdown link: ${destination}`);
+  } else if (!linkTargetExists(inventory, payload, resolvedPath, inPlugin)) {
+    addError(`${entry.relativePath} has an unresolved relative Markdown link: ${destination}`);
+  }
+}
+
+function validateMarkdownLinks(inventory, payload) {
+  for (const entry of inventory.entries.filter((candidate) => candidate.relativePath.endsWith('.md'))) {
+    const contents = entryText(entry, payload);
+    const inPlugin = pluginRelativePath(entry.absolutePath) !== null;
+    const destinations = contents === null ? [] : markdownDestinations(contents, inPlugin);
+    for (const destination of destinations) {
+      if (inPlugin && LOCAL_FILE_DESTINATION.test(destination)) {
+        addError(`${entry.relativePath} has a local file link, which installed copies cannot resolve: ${destination}`);
+      } else if (!isExternalDestination(destination)) {
+        validateLink(entry, destination, inventory, payload);
       }
+    }
+  }
+}
+
+function validatePayloadPaths(payload) {
+  for (const [relativePath, text] of [...payload].filter(([file]) => file.endsWith('.md'))) {
+    const contents = `${text}\n${decodeHtml(text)}\n${unescapeMarkdown(text)}`;
+    if (PARENT_PATH.test(contents)) {
+      addError(`${payloadLabel(relativePath)} contains a parent-directory path, which can leave the installed plugin. Plugin Markdown must not contain one, also not in code.`);
+    }
+    if (ROOT_RELATIVE_PATH.test(contents)) {
+      addError(`${payloadLabel(relativePath)} contains a root-relative link target, which installed copies cannot resolve.`);
     }
   }
 }
@@ -393,7 +734,12 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function validateLegacyReferences(files) {
+function isTextEntry(entry) {
+  return TEXT_EXTENSIONS.has(path.extname(entry.relativePath).toLowerCase())
+    || path.posix.basename(entry.relativePath) === 'LICENSE';
+}
+
+function validateLegacyReferences(inventory, payload) {
   const legacyMentions = [
     `@${'producer'}`,
     `@${'dev-team'}`,
@@ -405,86 +751,34 @@ function validateLegacyReferences(files) {
     `${'qa'}.agent.md`,
   ];
 
-  for (const filePath of files) {
-    const extension = path.extname(filePath).toLowerCase();
-    if (!TEXT_EXTENSIONS.has(extension) && path.basename(filePath) !== 'LICENSE') {
+  for (const entry of inventory.entries.filter(isTextEntry)) {
+    const contents = entryText(entry, payload);
+    if (contents === null) {
       continue;
     }
-
-    const contents = readFileSync(filePath, 'utf8');
-    for (const mention of legacyMentions) {
-      if (contents.includes(mention)) {
-        addError(`${repoPath(filePath)} contains legacy agent mention "${mention}".`);
-      }
+    for (const mention of legacyMentions.filter((candidate) => contents.includes(candidate))) {
+      addError(`${entry.relativePath} contains legacy agent mention "${mention}".`);
     }
-
     for (const fileName of oldAgentFileNames) {
       const pattern = new RegExp(`(^|[^A-Za-z0-9-])${escapeRegExp(fileName)}(?=$|[^A-Za-z0-9.-])`, 'm');
       if (pattern.test(contents)) {
-        addError(`${repoPath(filePath)} contains legacy agent filename "${fileName}".`);
+        addError(`${entry.relativePath} contains legacy agent filename "${fileName}".`);
       }
     }
   }
 }
 
-function validatePortableStrings(value, location = 'sync manifest') {
-  if (typeof value === 'string') {
-    if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) {
-      addError(`${location} contains an absolute path: ${value}`);
-    }
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => validatePortableStrings(item, `${location}[${index}]`));
-    return;
-  }
-
-  if (value && typeof value === 'object') {
-    for (const [key, nestedValue] of Object.entries(value)) {
-      validatePortableStrings(nestedValue, `${location}.${key}`);
-    }
-  }
+const payload = validatePayload();
+validateManifest(payload);
+for (const agentId of EXPECTED_AGENT_IDS) {
+  validateAgent(payload, agentId);
 }
-
-function validateSyncManifest(plugin, agentIds, skillNames) {
-  const manifestPath = path.join(REPO_ROOT, 'eng', 'awesome-copilot-sync.json');
-  const manifest = readJson(manifestPath, 'eng/awesome-copilot-sync.json');
-  if (!manifest) {
-    return;
-  }
-
-  validatePortableStrings(manifest);
-  try {
-    assertCanonicalSyncManifest(manifest);
-  } catch (error) {
-    addError(error.message);
-    return;
-  }
-  if (!sameArray(agentIds, EXPECTED_AGENT_IDS)) {
-    addError('sync manifest agent mappings do not match the standalone agent files.');
-  }
-
-  if (!skillNames.includes(manifest.skill.source)) {
-    addError(`sync manifest source skill does not exist: ${manifest.skill.source}`);
-  }
-  if (plugin && plugin.name !== CANONICAL_PLUGIN_TARGET) {
-    addError(`plugin.json name "${plugin.name}" must match sync target plugin "${CANONICAL_PLUGIN_TARGET}".`);
-  }
-  for (const field of EXPECTED_MANAGED_PLUGIN_FIELDS) {
-    if (plugin && !(field in plugin)) {
-      addError(`sync manifest manages plugin.json field "${field}", but the source field is missing.`);
-    }
-  }
-}
-
-const plugin = validatePlugin();
-const agentIds = validateAgents();
-const skillNames = validateSkills();
-const files = walkFiles(REPO_ROOT);
-validateMarkdownLinks(files);
-validateLegacyReferences(files);
-validateSyncManifest(plugin, agentIds, skillNames);
+validateSkill(payload);
+const inventory = walkRepository(REPO_ROOT, '', { entries: [], files: new Set(), directories: new Set() });
+validateSingleCopy(inventory, payload);
+validateMarkdownLinks(inventory, payload);
+validatePayloadPaths(payload);
+validateLegacyReferences(inventory, payload);
 
 if (errors.length > 0) {
   console.error(`Validation failed with ${errors.length} error${errors.length === 1 ? '' : 's'}:`);

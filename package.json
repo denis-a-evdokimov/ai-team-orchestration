@@ -4,9 +4,7 @@
   "type": "module",
   "scripts": {
     "validate": "node eng/validate.mjs",
-    "test": "node --test",
-    "awesome:check": "node eng/sync-awesome-copilot.mjs",
-    "awesome:prepare": "node eng/sync-awesome-copilot.mjs --write"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

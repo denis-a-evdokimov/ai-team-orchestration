@@ -1,6 +1,6 @@
 # Contributing
 
-Work on a feature branch. This repository is the canonical source; do not begin by patching an Awesome Copilot copy. The ownership and naming invariants are defined in [AGENTS.md](./AGENTS.md).
+Work on a feature branch. The plugin lives in [`plugins/ai-team-orchestration`](./plugins/ai-team-orchestration/), and this repository keeps exactly one copy of it. [AGENTS.md](./AGENTS.md) defines the layout and naming invariants.
 
 ## Pull requests
 
@@ -21,87 +21,108 @@ npm run validate
 npm test
 ```
 
-The validator checks standalone plugin metadata, the constrained frontmatter fields this repository relies on, relative Markdown links, stable IDs, legacy references, and synchronization configuration. It deliberately does not claim full YAML validation; Awesome Copilot's validators remain authoritative downstream. Tests execute copied validators and exporters entirely inside temporary repository fixtures.
+The validator checks:
 
-## Direct plugin smoke test
+- the Agent Plugins 1.0 manifest fields and `$schema`;
+- the exact file set of the plugin root: regular UTF-8 files only, with no links, hard links, extra files or extra folders;
+- the constrained frontmatter fields, the stable agent IDs, the `include-custom-instructions: true` agent setting and the skill name;
+- that no plugin manifest, skill, agent or copy of a plugin file exists outside the plugin root;
+- local Markdown links, and that plugin Markdown links point only to files in the plugin root. It reads every link form, code examples included. In plugin Markdown, it also reads URL attributes such as `href` and `src` outside HTML tags;
+- that plugin Markdown has no parent-directory path and no root-relative link target, also not in code;
+- legacy agent references.
 
-For packaging or content changes, test the standalone checkout directly before export:
+It does not claim full YAML or JSON Schema validation. The Awesome Copilot gates stay authoritative for a catalog listing. The tests run the validator against temporary copies of this repository.
 
-1. In VS Code, run **Chat: Install Plugin From Source**.
-2. Select this repository checkout.
-3. Confirm that `@ai-team-producer`, `@ai-team-dev`, and `@ai-team-qa` are available.
-4. Confirm that the `ai-team` skill loads. In a plugin installation, VS Code may show its namespace-prefixed command, such as `/ai-team-orchestration:ai-team`.
-5. Enable a test MCP or extension-provided tool, switch among the three AI Team agents, and confirm the tool remains available. The bundled agents intentionally omit `tools` and must not replace the user's enabled tool set.
-6. Exercise the changed agent or skill guidance without changing the stable IDs or local skill name.
+## Smoke test
 
-If more than 128 tools are enabled, reduce the selection in the tool picker or configure `github.copilot.chat.virtualTools.threshold` before the smoke test.
+For packaging or content changes, test the plugin root with GitHub Copilot CLI before review.
 
-## Export to Awesome Copilot
+1. List the plugin and its skill from the checkout:
 
-The export is deterministic and one-way. It manages the three root agents, mirrors the skill with the one explicit frontmatter-name adaptation, and updates only configured target plugin fields.
+   ```text
+   copilot --plugin-dir ./plugins/ai-team-orchestration plugin list
+   copilot --plugin-dir ./plugins/ai-team-orchestration skill list
+   ```
 
-### 1. Prepare a fresh target branch
+   Confirm that `ai-team-orchestration` shows the new version under **External Plugins**. Confirm that the `ai-team-orchestration` skill shows under **Plugin skills**.
+2. Start `copilot --plugin-dir ./plugins/ai-team-orchestration`. Run `/agent` and confirm the three agents: `ai-team-orchestration:ai-team-producer`, `ai-team-orchestration:ai-team-dev`, and `ai-team-orchestration:ai-team-qa`.
+3. Invoke the skill. Confirm that its four reference links open.
+4. Enable a test MCP or extension-provided tool, switch among the three AI Team agents, and confirm the tool remains available. The bundled agents intentionally omit `tools` and must not replace the user's enabled tool set.
+5. Exercise the changed agent or skill guidance without changing the stable IDs or the skill name.
 
-Start from a clean Awesome Copilot checkout with an `upstream` remote:
+### Install check for a release commit
 
-```text
-git status --short
-git fetch upstream main
-git switch --no-track --create feature/sync-ai-team-orchestration-<version> upstream/main
-```
+Before a catalog entry points at a commit, install that commit through a temporary marketplace. Run the check in a new shell process with an isolated Copilot home. Then the check does not change your own installation. The commands need PowerShell 7.4 or later.
 
-Both check and prepare require `upstream/main` to exist and be an ancestor of the attached target feature branch, and refuse target `main` or `staged` and detached HEAD. This proves the branch was created from the current fetched upstream baseline while allowing reruns after target commits. Prepare additionally refuses staged files, untracked files, and other dirty worktree changes.
+1. Start a new PowerShell process, for example `pwsh -NoProfile`. Stop at the first failed command. Create a new, empty temporary folder, and point the home, cache and configuration folders at it:
 
-### 2. Check and export from this repository
+   ```powershell
+   $ErrorActionPreference = 'Stop'
+   $PSNativeCommandUseErrorActionPreference = $true
+   $iso = Join-Path ([IO.Path]::GetTempPath()) ('copilot-release-check-' + [guid]::NewGuid().ToString('N'))
+   New-Item -ItemType Directory -Path $iso | Out-Null
+   $env:USERPROFILE = $iso
+   $env:HOME = $iso
+   $env:COPILOT_HOME = "$iso\.copilot"
+   $env:COPILOT_CACHE_HOME = "$iso\cache"
+   $env:LOCALAPPDATA = "$iso\AppData\Local"
+   $env:APPDATA = "$iso\AppData\Roaming"
+   $env:XDG_CONFIG_HOME = "$iso\.config"
+   $env:XDG_CACHE_HOME = "$iso\.cache"
+   $env:XDG_DATA_HOME = "$iso\.local\share"
+   $env:XDG_STATE_HOME = "$iso\.local\state"
+   ```
 
-Commit the canonical agents, complete skill tree, plugin metadata, and synchronization configuration on this feature branch before exporting. Both check and prepare read managed source bytes from the committed `HEAD` and refuse canonical `main` or `staged`, detached HEAD, staged changes, and any tracked or untracked dirty worktree state. The patch output parent directory must already exist, must not be a link/reparse point, and must be outside both repositories.
+   On Linux and macOS, set `HOME`, `COPILOT_HOME` and the `XDG_*` folders in the same way. The [Awesome Copilot install smoke gate](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/.github/scripts/external-plugins/external-plugin-quality-gates.mjs#L435-L480) sets `HOME` and the XDG folders on Linux.
+2. Write `$iso\marketplace\marketplace.json`. The plugin entry uses the full commit SHA and the version from `plugin.json`:
 
-From the clean, committed canonical checkout:
+   ```json
+   {
+     "name": "release-check",
+     "owner": { "name": "Release check" },
+     "plugins": [
+       {
+         "name": "ai-team-orchestration",
+         "description": "<description from plugin.json>",
+         "version": "<version from plugin.json>",
+         "source": {
+           "source": "github",
+           "repo": "denis-a-evdokimov/ai-team-orchestration",
+           "path": "plugins/ai-team-orchestration",
+           "sha": "<full commit SHA>"
+         }
+       }
+     ]
+   }
+   ```
 
-```text
-npm run validate
-npm test
-npm run awesome:check -- --target <awesome-copilot-checkout>
-npm run awesome:prepare -- --target <awesome-copilot-checkout> --output <patch-file>
-git -C <awesome-copilot-checkout> apply --check <patch-file>
-git -C <awesome-copilot-checkout> apply <patch-file>
-npm run awesome:check -- --target <awesome-copilot-checkout>
-```
+3. Install the plugin:
 
-The first check normally exits 1 when an update is pending. Prepare mode constructs the exact managed change in a private temporary no-hardlink clone and verifies its binary/full-index Git patch. It never applies, stages, commits, or pushes target changes. Recheck the target immediately before applying the prepared patch with your trusted Git client; then the final canonical check must exit 0. Do not apply if the target changed, developed links/reparse points, or no longer has the expected clean feature-branch state.
+   ```powershell
+   copilot plugin marketplace add "$iso\marketplace"
+   copilot plugin install ai-team-orchestration@release-check
+   ```
 
-### 3. Validate and build in Awesome Copilot
+4. Compare the installed folder with the plugin root at that commit. Run the commands in your checkout:
 
-From the target feature branch, run the Awesome commands:
+   ```powershell
+   git archive --format=tar --output="$iso\release.tar" <full commit SHA> plugins/ai-team-orchestration
+   tar -xf "$iso\release.tar" -C $iso
+   git diff --no-index --ignore-cr-at-eol --stat "$iso\plugins\ai-team-orchestration" "$env:COPILOT_HOME\installed-plugins\release-check\ai-team-orchestration"
+   ```
 
-```text
-npm ci
-npm run skill:validate
-npm run plugin:validate
-npm run build
-bash eng/fix-line-endings.sh
-npm run skill:validate
-npm run plugin:validate
-```
+   No output and no error mean that the file sets and the file contents are equal. A difference makes `git diff` exit with code 1, and PowerShell stops with an error.
+5. Close the shell process, and delete the temporary folder.
 
-Then rerun the canonical `awesome:check` command against the target checkout and inspect the complete target diff.
+Do the comparison before you run another Copilot CLI command. In our test, Copilot CLI 1.0.114 removed the installed copy at its next start. The marketplace was a local folder, and the plugin source was a GitHub repository.
 
-All outputs produced or materialized by Awesome's build and publication automation are build/publication-owned. Do not hand-edit generated outputs. The target plugin `plugins/ai-team-orchestration/README.md` is an Awesome-owned adapter and is intentionally outside synchronization. A manual review against the exported behavior is mandatory for every export: update the README in the same Awesome PR when needed, or record in that PR that the review found no documentation change necessary. Change canonical managed agent or skill content here and export again; maintain Awesome-specific documentation and build behavior in Awesome itself.
+The Awesome Copilot [external plugin gates](https://github.com/github/awesome-copilot/blob/f10fdb8b2660ce85c98f220b2f1ca24653768a5c/CONTRIBUTING.md#L213-L346) run the same kind of install check. They also check the manifest and run `vally lint`.
 
-### 4. Commit and open the Awesome PR
+## Release
 
-Commit and push only from the target feature branch. Open the Awesome Copilot PR with base branch `main`.
+1. Change the plugin in `plugins/ai-team-orchestration/`. Set a new SemVer `version` in `plugin.json`.
+2. Run the local validation and the smoke test.
+3. The repository owner merges the pull request with a merge commit. The merge commit on `main` is the release. This repository does not use tags.
+4. Run the install check for the merge commit.
 
-```text
-git push --set-upstream origin <branch>
-```
-
-Include these trace details in the PR description:
-
-- standalone repository URL;
-- exact standalone source commit SHA;
-- standalone `plugin.json` version;
-- local validation and test results;
-- Awesome skill validation, plugin validation, build, and line-ending results.
-
-The exporter changes only verified managed working-tree paths through Git patch application. It does not stage, commit, push, create branches, or open pull requests.
+A catalog entry, for example in Awesome Copilot, pins the plugin with `source.path` `plugins/ai-team-orchestration`, the full merge commit SHA, and the same version. A change to the Awesome Copilot entry needs the repository owner's approval and follows the public Awesome Copilot workflow.
