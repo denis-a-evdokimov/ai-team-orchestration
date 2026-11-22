@@ -218,6 +218,9 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['attribute after a quoted value without white space', '<img alt="x"src="../../LICENSE">', /links outside plugins\/ai-team-orchestration/],
     ['attribute value with encoded line breaks', '<div>\n<img src=".&#10;./.&#10;./LICENSE">\n</div>', /links outside plugins\/ai-team-orchestration/],
     ['destination with an escaped parenthesis', '[License](README.md\\)/../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['file URL with outer white space', '<a href=" file:///LICENSE ">License</a>', /README\.md has a local file link, which installed copies cannot resolve: file:\/\/\/LICENSE/],
+    ['srcset candidate after an encoded comma', '<img srcset="README.md 1x&#44;/root.png 2x" alt="">', /root-relative link/],
+    ['destination with nested parentheses', '[Missing](((draft)).md)', /unresolved relative Markdown link: \(\(draft\)\)\.md/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -225,12 +228,17 @@ test('validator rejects plugin links that leave the installed payload', async (c
       assertRejected(targetRoot, pattern);
     });
   }
-  await context.test('ignores a data URL in srcset', (subtest) => {
-    const targetRoot = createRepositoryCopy(subtest);
-    mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', '<img srcset="data:image/png;base64,AAAA 1x" alt="">\n\n## Origin');
-    const result = runValidator(targetRoot);
-    assert.equal(result.status, 0, result.stderr);
-  });
+  for (const [name, text] of [
+    ['data URL in srcset', '<img srcset="data:image/png;base64,AAAA 1x" alt="">'],
+    ['full URL with an attribute name in its path', 'See https://example.com/src=icon for details.'],
+  ]) {
+    await context.test(`ignores a ${name}`, (subtest) => {
+      const targetRoot = createRepositoryCopy(subtest);
+      mutateText(pluginPath(targetRoot, 'README.md'), '## Origin', `${text}\n\n## Origin`);
+      const result = runValidator(targetRoot);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  }
 });
 
 test('validator checks link forms in code examples', async (context) => {
@@ -265,6 +273,13 @@ test('validator reports broken repository links without failing', async (context
   await context.test('ignores an assignment outside an HTML tag', (subtest) => {
     const targetRoot = createRepositoryCopy(subtest);
     mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', "```python\ndata = load('input.json')\n```\n\n## Pull requests");
+    const result = runValidator(targetRoot);
+    assert.equal(result.status, 0, result.stderr);
+  });
+  await context.test('keeps an unknown character reference literal', (subtest) => {
+    const targetRoot = createRepositoryCopy(subtest);
+    writeFileSync(path.join(targetRoot, 'docs', 'a&constructor;.md'), '# Example\n', 'utf8');
+    mutateText(path.join(targetRoot, 'CONTRIBUTING.md'), '## Pull requests', '[x](./docs/a&constructor;.md)\n\n## Pull requests');
     const result = runValidator(targetRoot);
     assert.equal(result.status, 0, result.stderr);
   });
