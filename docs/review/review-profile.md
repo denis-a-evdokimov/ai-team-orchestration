@@ -45,11 +45,13 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 - No tags or GitHub releases: the merge commit on `main` is the release locator. Accepted in #18.
 - The validator implements the needed Agent Plugins 1.0 manifest rules without a JSON Schema library. Accepted in #18.
 - The plugin `README.md` is the user README: the marketplace description and the delegation guidance. The root `README.md` serves repository visitors and links to the plugin README. Accepted in #18.
+- The validator reads text in indented code blocks as Markdown. A naive indented-code rule would hide real links in nested list items. Thus an indented example can only add a diagnostic. Use fenced code blocks for examples. Accepted in #18.
 
 ## Recurring findings (check these first)
 
 - Documentation that claims an install route or a client behavior without verification or a citation. Keep command-line interface (CLI) discovery, catalog installation and client compatibility as separate claims, each with the client version that was tested.
 - Validator checks that compare names but not entry types, links, hard links or nested paths.
+- Link extraction is a scanner, not a full Markdown parser. When it changes, test fenced code of both kinds, code spans, HTML attributes, reference definitions in containers and escaped characters.
 - A version change that is missing from `plugin.json` when the plugin root changes.
 
 ## Severity calibration
@@ -65,5 +67,5 @@ The repository is the single source and the distribution of an Agent Plugins 1.0
 
 States: watch, escalate, resolved.
 
-- `eng/validate.mjs` - growing file - about 680 lines after #18; each function within a complexity of 10 - **watch**
+- `eng/validate.mjs` - growing file - about 730 lines after #18; each function within a complexity of 10 - **watch**
 - Root `README.md` and plugin `README.md` - duplication cluster - the quick start prompts exist in both - **watch**

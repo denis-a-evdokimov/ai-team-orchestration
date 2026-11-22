@@ -204,6 +204,7 @@ test('validator rejects plugin links that leave the installed payload', async (c
     ['data-src before src', '<img data-src="./README.md" src="../../LICENSE">', /links outside plugins\/ai-team-orchestration/],
     ['reference definition in a block quote', '[License][a]\n\n> [a]: ../../LICENSE', /links outside plugins\/ai-team-orchestration/],
     ['link after a longer closing fence', '```\ncode\n````\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
+    ['link after a tilde fence that contains backticks', '~~~\n```\n~~~\n\n[License](../../LICENSE)', /links outside plugins\/ai-team-orchestration/],
   ]) {
     await context.test(name, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -214,6 +215,8 @@ test('validator rejects plugin links that leave the installed payload', async (c
   for (const [name, example] of [
     ['code span', 'Use `src="assets/example.png"` in a tag.'],
     ['fenced code block', '```html\n<img src="assets/example.png">\n```'],
+    ['HTML tag in a code span', 'Use `<img src="assets/example.png">` in a page.'],
+    ['data URL in srcset', '<img srcset="data:image/png;base64,AAAA 1x" alt="">'],
   ]) {
     await context.test(`ignores a ${name}`, (subtest) => {
       const targetRoot = createRepositoryCopy(subtest);
@@ -405,7 +408,6 @@ test('validator reports special and unreadable files without blocking', async (c
     const unreadablePath = path.join(targetRoot, 'docs', 'unreadable.md');
     writeFileSync(unreadablePath, '# Unreadable\n', 'utf8');
     chmodSync(unreadablePath, 0o000);
-    subtest.after(() => chmodSync(unreadablePath, 0o600));
     assertRejected(targetRoot, /docs\/unreadable\.md could not be read \(EACCES\)/);
   });
 });

@@ -499,53 +499,106 @@ function validateSingleCopy(inventory, payload) {
   }
 }
 
-// Removes fenced code blocks, so that code examples are not read as links.
-// A closing fence uses the character of the opening fence and is at least as long.
+// Blanks fenced code blocks in one pass, in source order. A closing fence uses the
+// character of the opening fence, is at least as long, and has nothing after it.
 function withoutFencedCode(markdown) {
-  return markdown
-    .replace(/^ {0,3}(`{3,})[^`\n]*\n[\s\S]*?(?:^ {0,3}\1`*[ \t]*$|(?![\s\S]))/gm, '')
-    .replace(/^ {0,3}(~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1~*[ \t]*$|(?![\s\S]))/gm, '');
+  let fence = null;
+  return markdown.split('\n').map((line) => {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence === null) {
+      const opens = marker && !(marker[1][0] === '`' && marker[2].includes('`'));
+      fence = opens ? marker[1] : null;
+      return opens ? '' : line;
+    }
+    if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && marker[2].trim() === '') {
+      fence = null;
+    }
+    return '';
+  }).join('\n');
 }
 
-// Removes code spans. A code span does not cross a blank line, and an escaped backtick does not open one.
-function withoutCodeSpans(markdown) {
-  return markdown.replace(/(?<![\\`])(`+)(?!`)(?:[^\n]|\n(?![ \t]*\n))*?[^`]\1(?!`)/g, ' ');
-}
-
-const HTML_TAG = /<[A-Za-z][A-Za-z0-9-]*((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>/g;
+const HTML_TAG_AT = /<[A-Za-z][A-Za-z0-9-]*((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>/y;
 const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const INLINE_LINK = /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g;
+// Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
+const REFERENCE_DEFINITION = /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm;
 
-// Reads every attribute of every HTML tag. Tags are read before code spans are removed,
-// so that a backtick inside a tag cannot hide its attributes. A tag inside a code span is
-// also checked, which can only add a diagnostic.
-function htmlDestinations(text) {
+// Returns the end of the code span that starts at `start`, or -1. A code span does not cross a blank line.
+function codeSpanEnd(text, start, runLength) {
+  const closer = new RegExp(`(?<!\`)\`{${runLength}}(?!\`)`, 'g');
+  closer.lastIndex = start + runLength;
+  const match = closer.exec(text);
+  if (!match || /\n[ \t]*\n/.test(text.slice(start, match.index))) {
+    return -1;
+  }
+  return match.index + runLength;
+}
+
+// Scans inline text in source order, as CommonMark does: an HTML tag that starts first keeps
+// its attributes, a code span that starts first hides the markup inside it, and an escaped
+// character stays literal. Returns the text without code spans and tags, and the tag attributes.
+function scanInline(text) {
+  const tags = [];
+  let visible = '';
+  let index = 0;
+  while (index < text.length) {
+    HTML_TAG_AT.lastIndex = index;
+    const tag = text[index] === '<' ? HTML_TAG_AT.exec(text) : null;
+    const runLength = text[index] === '`' ? /^`+/.exec(text.slice(index))[0].length : 0;
+    const spanEnd = runLength ? codeSpanEnd(text, index, runLength) : -1;
+    if (tag) {
+      tags.push(tag[1]);
+      visible += ' ';
+      index = HTML_TAG_AT.lastIndex;
+    } else if (text[index] === '\\') {
+      visible += text.slice(index, index + 2);
+      index += 2;
+    } else if (runLength) {
+      visible += spanEnd === -1 ? text.slice(index, index + runLength) : ' ';
+      index = spanEnd === -1 ? index + runLength : spanEnd;
+    } else {
+      visible += text[index];
+      index += 1;
+    }
+  }
+  return { visible, tags };
+}
+
+// Reads the candidate URLs of a srcset value. A URL can contain commas, for example a data URL.
+function srcsetUrls(value) {
+  const urls = [];
+  let rest = value;
+  while (rest.replace(/^[\s,]+/, '') !== '') {
+    rest = rest.replace(/^[\s,]+/, '');
+    const url = /^\S+/.exec(rest)[0];
+    const trimmedUrl = url.replace(/,+$/, '');
+    urls.push(trimmedUrl);
+    rest = rest.slice(url.length);
+    if (trimmedUrl === url) {
+      const comma = rest.indexOf(',');
+      rest = comma === -1 ? '' : rest.slice(comma + 1);
+    }
+  }
+  return urls;
+}
+
+function attributeDestinations(attributes) {
   const destinations = [];
-  for (const tag of text.matchAll(HTML_TAG)) {
-    for (const attribute of tag[1].matchAll(HTML_ATTRIBUTE)) {
-      const name = attribute[1].toLowerCase();
-      const value = attribute[2] ?? attribute[3] ?? attribute[4];
-      if (value === undefined || !URL_ATTRIBUTES.has(name)) {
-        continue;
-      }
-      const urls = name === 'srcset' ? value.split(',').map((candidate) => candidate.trim().split(/\s+/)[0]) : [value];
-      destinations.push(...urls);
+  for (const attribute of attributes.matchAll(HTML_ATTRIBUTE)) {
+    const name = attribute[1].toLowerCase();
+    const value = attribute[2] ?? attribute[3] ?? attribute[4];
+    if (value !== undefined && URL_ATTRIBUTES.has(name)) {
+      destinations.push(...(name === 'srcset' ? srcsetUrls(value) : [value]));
     }
   }
   return destinations;
 }
 
 function markdownDestinations(markdown) {
-  const patterns = [
-    // The destination after any link text, so that nested brackets cannot hide a link.
-    /\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)/g,
-    // Reference definitions, also inside block quotes and list items, and with escaped brackets in the label.
-    /^(?:[ \t>]|[-*+][ \t]|\d{1,9}[.)][ \t])*\[(?:\\.|[^\\\]])+\]:[ \t]*\n?[ \t>]*(<[^>\n]*>|\S+)/gm,
-  ];
-  const withoutFences = withoutFencedCode(markdown);
-  const text = withoutCodeSpans(withoutFences);
-  const destinations = htmlDestinations(withoutFences);
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
+  const { visible, tags } = scanInline(withoutFencedCode(markdown));
+  const destinations = tags.flatMap(attributeDestinations);
+  for (const pattern of [INLINE_LINK, REFERENCE_DEFINITION]) {
+    for (const match of visible.matchAll(pattern)) {
       destinations.push(match[1]);
     }
   }
